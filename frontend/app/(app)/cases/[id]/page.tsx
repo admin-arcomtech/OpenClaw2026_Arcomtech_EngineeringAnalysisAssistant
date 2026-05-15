@@ -7,6 +7,8 @@ import { useAuth } from "@/lib/useAuth";
 import { api, type CaseOut, type CaseStatus, ApiError } from "@/lib/api";
 import { StatusBadge, SeverityBadge } from "@/components/ui/StatusBadge";
 import { useToast } from "@/components/ui/Toast";
+import { SimilarCasesPanel } from "@/components/ai/SimilarCasesPanel";
+import { AIRecommendationsPanel } from "@/components/ai/AIRecommendationsPanel";
 
 const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -209,16 +211,11 @@ export default function CaseDetailPage() {
         )}
       </div>
 
-      {/* Sprint 3 AI Placeholders */}
-      <div className="bg-brand-light border border-blue-200 rounded-2xl p-4">
-        <p className="text-xs font-semibold text-brand uppercase tracking-wider mb-2">Similar Cases — Sprint 3</p>
-        <p className="text-sm text-blue-500">Pencarian kasus serupa via pgvector akan tersedia setelah embedding pipeline aktif.</p>
-      </div>
+      {/* Sprint 3 — F-002 Similar Cases */}
+      {token && <SimilarCasesPanel token={token} caseId={caseData.id} />}
 
-      <div className="bg-purple-50 border border-purple-200 rounded-2xl p-4">
-        <p className="text-xs font-semibold text-purple-700 uppercase tracking-wider mb-2">AI Recommendations — Sprint 3</p>
-        <p className="text-sm text-purple-500">Rekomendasi AI akan tersedia setelah integrasi LLM aktif.</p>
-      </div>
+      {/* Sprint 3 — F-003 AI Recommendations */}
+      {token && <AIRecommendationsPanel token={token} caseId={caseData.id} />}
     </div>
   );
 }

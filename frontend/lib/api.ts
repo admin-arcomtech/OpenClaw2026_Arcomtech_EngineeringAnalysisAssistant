@@ -135,6 +135,59 @@ export type Taxonomy = {
   statuses: string[];
 };
 
+// ── AI (Sprint 3) ─────────────────────────────────────────────────────────────
+
+export type SimilarCaseItem = {
+  id: string;
+  case_id: string;
+  similarity_pct: number;
+  title: string;
+  model: string | null;
+  process: string | null;
+  fatal_error: string | null;
+  status: string;
+  root_cause: string | null;
+  countermeasure: string | null;
+  resolution_days: number | null;
+  created_at: string;
+};
+
+export type SimilarCaseResponse = {
+  items: SimilarCaseItem[];
+  source: string;
+  mode: "vector" | "keyword";
+  warning: string | null;
+  threshold: number;
+  total_candidates: number;
+};
+
+export type Hypothesis = {
+  title: string;
+  confidence: number;
+  category_4m1e: "Man" | "Machine" | "Material" | "Method" | "Environment";
+  evidence: string[];
+  suggested_verification: string[];
+  trial_risk: "LOW" | "MEDIUM" | "HIGH";
+  estimated_time_min: number;
+  similar_case_count: number;
+};
+
+export type RecommendationsResponse = {
+  id: string;
+  case_id: string;
+  hypotheses: Hypothesis[];
+  source: string;
+  model_version: string;
+  created_at: string;
+};
+
+export type AIHealth = {
+  openclaw_configured: boolean;
+  openclaw_reachable: boolean;
+  fallback_available: boolean;
+  openclaw_base_url: string | null;
+};
+
 export type CaseCreatePayload = {
   model: string;
   process: string;
@@ -212,6 +265,33 @@ export const api = {
 
   getMetadata: (token: string) =>
     request<Taxonomy>("/api/metadata", {
+      headers: { Authorization: `Bearer ${token}` },
+    }),
+
+  // AI — Sprint 3
+  similarCases: (token: string, case_id: string, threshold = 0.5, limit = 10) =>
+    request<SimilarCaseResponse>("/api/ai/similar-cases", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ case_id, threshold, limit }),
+    }),
+
+  recommendations: (token: string, case_id: string, extra_context?: string) =>
+    request<RecommendationsResponse>("/api/ai/recommendations", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ case_id, extra_context }),
+    }),
+
+  aiFeedback: (token: string, case_id: string, data: { target_type: string; target_id: string; rating: string; note?: string }) =>
+    request<{ ok: boolean; id: string }>(`/api/ai/feedback?case_id=${encodeURIComponent(case_id)}`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify(data),
+    }),
+
+  aiHealth: (token: string) =>
+    request<AIHealth>("/api/ai/health", {
       headers: { Authorization: `Bearer ${token}` },
     }),
 };

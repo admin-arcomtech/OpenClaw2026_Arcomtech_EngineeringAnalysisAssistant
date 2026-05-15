@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile, status
 from sqlalchemy.orm import Session, joinedload
 
 from app.core.database import get_db
@@ -24,6 +24,7 @@ from app.schemas.case import (
 )
 from app.services.audit_service import log_event
 from app.services.case_id import generate_case_id
+from app.services.embedding_service import embed_case
 from app.services.notification_service import notify_high_severity
 
 router = APIRouter(prefix="/api/cases", tags=["cases"])
@@ -56,6 +57,7 @@ def _load_case(db: Session, case_id: str) -> Case:
 @router.post("", response_model=CaseOut, status_code=status.HTTP_201_CREATED)
 def create_case(
     body: CaseCreateRequest,
+    background: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -103,6 +105,9 @@ def create_case(
     )
     db.commit()
     db.refresh(case)
+
+    # Sprint 3 — async embedding pipeline (F-002)
+    background.add_task(embed_case, case.id)
 
     logger.info("Kasus dibuat: %s oleh %s", case_display_id, current_user.employee_id)
     return _load_case(db, case.id)
