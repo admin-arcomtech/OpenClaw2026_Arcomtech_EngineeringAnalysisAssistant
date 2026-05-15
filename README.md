@@ -11,6 +11,28 @@
 
 ---
 
+## Table of Contents
+
+- [Tech Stack](#tech-stack)
+- [How to Setup](#how-to-setup) — install & jalankan aplikasi
+  - [1. Prasyarat](#1-prasyarat)
+  - [2. Setup Dasar (3 Perintah)](#2-setup-dasar-3-perintah)
+  - [3. Verifikasi Instalasi](#3-verifikasi-instalasi)
+  - [4. Setup AI (Opsional — Openclaw)](#4-setup-ai-opsional--openclaw)
+  - [5. Konfigurasi Network LAN / Pilot Intranet](#5-konfigurasi-network-lan--pilot-intranet)
+  - [6. Local Development (tanpa Docker)](#6-local-development-tanpa-docker)
+  - [7. Troubleshooting Setup](#7-troubleshooting-setup)
+- [How to Use this App](#how-to-use-this-app) — workflow E2E per role
+  - [Akun Pilot (Login)](#akun-pilot-login)
+  - [A. Workflow Junior Engineer (Engineer Baru)](#a-workflow-junior-engineer-engineer-baru)
+  - [B. Workflow Senior Engineer](#b-workflow-senior-engineer)
+  - [C. Workflow Engineering Manager](#c-workflow-engineering-manager)
+  - [D. Workflow Admin](#d-workflow-admin)
+  - [Tips Penggunaan](#tips-penggunaan)
+- [Reference](#reference)
+
+---
+
 ## Tech Stack
 
 | Layer | Technology |
@@ -24,197 +46,610 @@
 
 ---
 
-## 1. Quick Start (Docker — direkomendasikan)
+# How to Setup
 
-### Prasyarat
+## 1. Prasyarat
 
-- **Docker** ≥ 24 + **Docker Compose v2** (`docker compose version`)
-- Port bebas: `3000` (frontend), `8000` (backend), `5432` (postgres)
-- (Opsional) **Openclaw Gateway** running di host pada port `18789` — kalau tidak ada, sistem otomatis pakai *local fallback*
+| Wajib | Versi minimum | Cek |
+|-------|--------------|-----|
+| Docker Engine | 24.x | `docker --version` |
+| Docker Compose v2 | 2.20.x | `docker compose version` |
+| Port bebas | 3000, 8000, 5432 | `ss -tlnp \| grep -E '3000\|8000\|5432'` |
+| Disk space | ≥ 3 GB | `df -h .` |
+| Memory | ≥ 2 GB | `free -h` |
 
-### Langkah
+| Opsional | Untuk |
+|----------|-------|
+| Openclaw Gateway (port 18789) | AI penuh (recommendations + Why‑Why) |
+| `socat` | Bridge Openclaw ke Docker (lihat §4) |
+
+Tanpa Openclaw, aplikasi tetap jalan menggunakan **deterministic local fallback** (embedding hash 1536d + rule‑based 4M1E generator).
+
+---
+
+## 2. Setup Dasar (3 Perintah)
 
 ```bash
-# 1. Clone
+# 1. Clone repository
 git clone https://github.com/admin-arcomtech/OpenClaw2026_Arcomtech_EngineeringAnalysisAssistant.git arcom
 cd arcom
 
-# 2. (Opsional) buat .env di root untuk override default
+# 2. Build & jalankan seluruh stack (Postgres + Backend + Frontend)
+docker compose up -d --build
+
+# 3. Tunggu ~60 detik, lalu cek health
+curl http://localhost:8000/api/health
+# Expected: {"status":"ok","database":"ok"}
+```
+
+Saat pertama kali start, backend akan otomatis menjalankan:
+
+| Step | Skrip | Hasil |
+|------|-------|-------|
+| 1 | `alembic upgrade head` | Apply migrasi DB 001 → 005 |
+| 2 | `python seed.py` | Buat 4 user pilot (Junior, Senior, Manager, Admin) |
+| 3 | `python seed_cases.py` | Buat 12 kasus contoh |
+| 4 | `python embed_existing.py` | Generate embedding untuk kasus seed |
+| 5 | `uvicorn app.main:app --host 0.0.0.0` | Start API di port 8000 |
+
+> Total waktu first boot: **~60–120 detik** tergantung kecepatan disk dan apakah Openclaw aktif.
+
+---
+
+## 3. Verifikasi Instalasi
+
+| URL | Expected | Yang dicek |
+|-----|----------|-----------|
+| http://localhost:3000 | Halaman login | Frontend UI |
+| http://localhost:8000/api/health | `{"status":"ok"}` | Backend + DB |
+| http://localhost:8000/docs | Swagger UI | Semua endpoint |
+| http://localhost:8000/api/ai/health *(perlu token)* | JSON status AI | Provider AI |
+
+Tes login API (CLI):
+
+```bash
+curl -X POST http://localhost:8000/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"employee_id":"EMP004","password":"Admin@12345"}'
+# Expected: {"access_token":"eyJ...","token_type":"bearer","expires_in_hours":8}
+```
+
+Tes login UI: buka http://localhost:3000, klik **"Belum punya akun / Lihat akun pilot demo"**, pilih salah satu akun → otomatis terisi → klik **Masuk**.
+
+---
+
+## 4. Setup AI (Opsional — Openclaw)
+
+Kalau Anda **tidak punya Openclaw**, skip bagian ini — aplikasi sudah jalan dengan fallback.
+
+### 4.1 Install Openclaw Gateway di host
+
+```bash
+openclaw gateway --port 18789
+```
+
+Konfigurasi `~/.openclaw/openclaw.json`:
+
+```json
+{
+  "gateway": {
+    "auth": { "mode": "token", "token": "GANTI_TOKEN_ANDA" },
+    "http": {
+      "endpoints": {
+        "chatCompletions": { "enabled": true },
+        "responses":       { "enabled": true }
+      }
+    }
+  }
+}
+```
+
+Lalu konfigurasi upstream LLM (OpenAI / Ollama / Anthropic) di Openclaw.
+
+### 4.2 Setup relay (karena Openclaw bind ke 127.0.0.1)
+
+Openclaw Gateway default bind ke loopback, **tidak bisa dijangkau dari Docker container**. Pakai socat relay:
+
+```bash
+# Install socat
+sudo apt-get install -y socat
+
+# Mode 1 — manual (sekali pakai)
+nohup socat TCP-LISTEN:18790,fork,reuseaddr,bind=0.0.0.0 \
+  TCP:127.0.0.1:18789 > /tmp/openclaw-relay.log 2>&1 &
+
+# Mode 2 — systemd service (persist setelah reboot, RECOMMENDED)
+sudo cp deploy/openclaw-relay.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now openclaw-relay
+systemctl status openclaw-relay
+```
+
+### 4.3 Set environment variable
+
+Buat file `.env` di root project:
+
+```bash
 cat > .env <<'EOF'
 JWT_SECRET_KEY=ubah-rahasia-ini-saat-produksi
 CORS_ORIGINS=http://localhost:3000
 NEXT_PUBLIC_API_URL=http://localhost:8000
 
-# Hanya jika Openclaw aktif
 AI_ENABLED=true
-OPENCLAW_BASE_URL=http://host.docker.internal:18789/v1
-OPENCLAW_TOKEN=ganti-dengan-token-openclaw-anda
+OPENCLAW_BASE_URL=http://host.docker.internal:18790/v1
+OPENCLAW_TOKEN=token-yang-sama-dengan-openclaw.json
+
+# Set false jika upstream LLM tidak punya endpoint /v1/embeddings
+# (chat tetap pakai Openclaw, embedding pakai fallback deterministik 1536d)
+OPENCLAW_EMBEDDINGS_ENABLED=false
 EOF
-
-# 3. Jalankan seluruh stack
-docker compose up -d --build
-
-# 4. Cek status
-docker compose ps
-docker compose logs -f backend   # ikuti log sampai "Application startup complete"
 ```
 
-Container yang aktif:
-
-| Container | Port | Keterangan |
-|-----------|------|------------|
-| `arcom_postgres` | 5432 | PostgreSQL 16 + pgvector |
-| `arcom_backend` | 8000 | FastAPI + Alembic migrations + seed otomatis |
-| `arcom_frontend` | 3000 | Next.js 14 (dev mode di pilot intranet) |
-
-Saat pertama kali start, backend akan:
-1. `alembic upgrade head` — apply migrasi 001 sampai 005
-2. `python seed.py` — buat 4 user seed (Junior, Senior, Manager, Admin)
-3. `python seed_cases.py` — buat 12 kasus contoh
-4. `python embed_existing.py` — generate embedding untuk kasus seed
-5. Start uvicorn pada `:8000`
-
-### Verifikasi
-
-| URL | Yang dicek |
-|-----|-----------|
-| http://localhost:3000 | UI login |
-| http://localhost:8000/api/health | `{"status":"ok","database":"ok"}` |
-| http://localhost:8000/docs | Swagger UI (semua endpoint) |
-| http://localhost:8000/api/ai/health | Status Openclaw vs fallback |
-
----
-
-## 2. Seed Users — Login untuk testing
-
-| Role | Employee ID | Password |
-|------|-------------|----------|
-| Junior Engineer | `EMP001` | `Junior@12345` |
-| Senior Engineer | `EMP002` | `Senior@12345` |
-| Engineering Manager | `EMP003` | `Manager@12345` |
-| Admin | `EMP004` | `Admin@12345` |
-
-> Ganti password user ini sebelum produksi. Admin dapat menambah user via `/admin/users`.
-
----
-
-## 3. Use Case — Engineering Baru (End‑to‑End)
-
-> Skenario: **Junior Engineer baru** menemukan abnormality "Nozzle Clog" di model X‑123 pada line A, shift PAGI. Berikut alur full investigasi sampai knowledge tersimpan.
-
-### Step 1 — Buat kasus (Junior)
-
-1. Buka **http://localhost:3000** → login `EMP001` / `Junior@12345`.
-2. Tap **Buat Kasus Baru** di dashboard (atau bottom nav `Baru`).
-3. Isi form:
-   - **Model**: `X-123`
-   - **Process**: `Print`
-   - **Line**: `A`
-   - **Fatal Error**: `Nozzle Clog`
-   - **Symptom**: `Tinta tidak keluar pada nozzle 3 dan 7 setelah 2 jam runtime`
-   - **Severity**: `HIGH`
-   - **Shift**: `PAGI`
-   - (Opsional) Upload max 5 foto evidence
-4. Klik **Buat Kasus**.
-5. Sistem akan:
-   - Generate Case ID `IEI-YYYYMMDD-XXXX`
-   - Auto‑embed kasus → cari kasus serupa (F‑002)
-   - Kirim notifikasi ke Senior karena severity HIGH
-
-### Step 2 — Lihat Similar Cases + AI Recommendations (Junior)
-
-Di halaman detail kasus:
-
-1. **Panel Similar Cases** otomatis menampilkan kasus historis dengan badge `similarity_pct`. Sumber ditampilkan: `openclaw` / `fallback` / `keyword`.
-2. **AI Recommendations** menampilkan 3 hipotesis 4M1E:
-   - Title, category (Man/Machine/Material/Method), confidence %, evidence list, suggested verifications, trial_risk.
-3. Tap **Useful** / **Not Relevant** untuk feedback (menjadi sinyal training).
-
-### Step 3 — Trial Queue (F‑004)
-
-1. Buka tab **Trial Queue** atau di case detail klik **Generate Trial Priority**.
-2. Sistem menampilkan queue trial diurutkan LOW‑risk dulu, dengan estimasi waktu & success rate dari kasus serupa.
-3. **Reorder** (↑↓) jika perlu, lalu klik **Approve Queue**.
-   - Jika ada trial **HIGH risk** → Junior diminta minta approval Senior.
-   - Junior tidak bisa approve queue yang semua HIGH risk.
-
-### Step 4 — Log Trial (F‑005)
-
-1. Pilih item queue → **Log Trial**.
-2. Form akan auto‑filled dari queue item (trial_action, risk_level).
-3. Isi:
-   - **Observation** (minimal 20 karakter)
-   - **Outcome**: `IMPROVED` / `NO_CHANGE` / `WORSENED` / `INCONCLUSIVE`
-   - **Improvement %**, **Time spent (min)**, **Scrap impact**
-   - (Opsional) Upload max 3 foto evidence
-4. Jika offline, draft otomatis tersimpan di `localStorage` (`trial-draft-{caseId}`).
-5. Status case otomatis maju ke `TRIAL_RUNNING` saat outcome IMPROVED/WORSENED.
-
-### Step 5 — Confirm Root Cause (Senior)
-
-> Logout → login `EMP002` / `Senior@12345`.
-
-1. Buka case yang sama (atau klik notifikasi bell).
-2. Di panel **Konfirmasi Root Cause**, isi teks root cause (≥10 karakter).
-3. Klik **Konfirmasi Root Cause**.
-4. Sistem set `case.status = CONFIRMED`, `why_why_eligible = true`, lalu **auto‑embed root cause** ke knowledge base.
-
-### Step 6 — Generate & Approve Why‑Why (F‑006)
-
-1. Senior klik link **Why‑Why Analysis** di case detail (atau Junior buka `/cases/:id/why-why`).
-2. Klik **Generate Why‑Why Draft** → AI menghasilkan minimal 5 level Why × 4M1E + immediate countermeasure + corrective + preventive action.
-3. Edit jika perlu (semua field editable).
-4. Junior klik **Kirim untuk Persetujuan** → status `PENDING_APPROVAL`, Senior dapat notifikasi.
-5. Senior buka halaman Why‑Why → klik **Setujui** (atau **Tolak** dengan komentar).
-6. Setelah disetujui → otomatis ter‑embed ke knowledge base & menjadi searchable di `/knowledge-base`.
-
-### Step 7 — Archive (Senior/Manager)
-
-1. Setelah monitoring stabil, advance status `CONFIRMED → ARCHIVED`.
-2. Sistem set `archived_at`, lakukan **consolidated embedding** (full narrative + trials + Why‑Why).
-3. Case menjadi read‑only.
-
-### Step 8 — Knowledge reuse (Engineer berikutnya)
-
-Saat ada engineer lain buat kasus baru dengan symptom serupa di model X‑123:
-
-- Similar Cases panel **akan langsung memunculkan kasus ini** dengan root cause + Why‑Why approved.
-- Trial Queue akan diranking dengan success rate dari trial yang sudah ada.
-- AI recommendations akan reference countermeasure dari kasus arsip.
-
-> **Loop knowledge** ini adalah esensi dari Engineering Memory Engine (F‑007).
-
----
-
-## 4. Use Case — Manager & Admin
-
-### Manager (`EMP003`)
-
-| Aksi | Lokasi |
-|------|--------|
-| Lihat KPI dashboard (TTRC, AI usefulness %, KB growth) | `/dashboard` (cards atas) |
-| Lihat semua kasus & filter status | `/cases` |
-| Lihat audit & analytics admin | `/admin` |
-| Buka knowledge base | bottom nav **KB** atau `/knowledge-base` |
-
-### Admin (`EMP004`)
-
-| Aksi | Lokasi |
-|------|--------|
-| CRUD users (role, division, aktif/nonaktif) | `/admin/users` |
-| Import CSV historical Why-Why (dry-run dulu) | `/admin/import` |
-| Audit log (immutable, viewer only) | `/admin/audit` |
-| Lihat env AI settings | `/admin/settings` |
-
-CSV import format (kolom wajib): `model, fatal_error, symptom, root_cause`
-Kolom opsional: `process, line, title, severity, temporary_action`.
-
----
-
-## 5. Smoke Test (CLI)
+### 4.4 Restart & verifikasi
 
 ```bash
-# Health check
+docker compose restart backend
+sleep 10
+
+# Login → ambil token
+TOKEN=$(curl -s -X POST http://localhost:8000/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"employee_id":"EMP002","password":"Senior@12345"}' \
+  | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
+
+# Cek AI health
+curl -s http://localhost:8000/api/ai/health -H "Authorization: Bearer $TOKEN" | python3 -m json.tool
+```
+
+Expected:
+
+```json
+{
+  "openclaw_configured": true,
+  "openclaw_reachable": true,
+  "openclaw_chat_reachable": true,
+  "openclaw_embed_reachable": false,
+  "embeddings_via_primary": false,
+  "fallback_available": true
+}
+```
+
+`openclaw_chat_reachable: true` berarti **AI Recommendations & Why‑Why Draft sudah pakai LLM nyata**.
+
+---
+
+## 5. Konfigurasi Network LAN / Pilot Intranet
+
+### Akses dari mesin yang sama (developer)
+
+Pakai `http://localhost:3000` — sudah otomatis.
+
+### Akses dari laptop lain di LAN (pilot factory)
+
+Frontend mendeteksi hostname browser **secara runtime**, jadi tidak perlu rebuild:
+
+1. Cari IP server: `hostname -I | awk '{print $1}'` → mis. `10.11.8.231`
+2. Buka di browser laptop pilot: `http://10.11.8.231:3000`
+3. Login akan otomatis hit `http://10.11.8.231:8000` (sama hostname dengan UI).
+
+> Pastikan port 3000 + 8000 + 5432 tidak diblokir firewall server: `sudo ufw allow 3000,8000/tcp`.
+
+CORS sudah longgar saat `APP_ENV != production` untuk pilot intranet. Untuk produksi: set `APP_ENV=production` dan whitelist origin spesifik di `CORS_ORIGINS`.
+
+---
+
+## 6. Local Development (tanpa Docker)
+
+### Backend
+
+```bash
+cd backend
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+
+# Setup DB (butuh PostgreSQL 16 + pgvector lokal)
+export DATABASE_URL=postgresql://arcom_user:arcom_pass@localhost:5432/arcom_db
+alembic upgrade head
+python seed.py
+python seed_cases.py
+
+uvicorn app.main:app --reload
+```
+
+### Frontend
+
+```bash
+cd frontend
+npm install
+echo "NEXT_PUBLIC_API_URL=http://localhost:8000" > .env.local
+npm run dev
+```
+
+### Run unit tests
+
+```bash
+cd backend
+pytest -q
+```
+
+---
+
+## 7. Troubleshooting Setup
+
+| Gejala | Penyebab | Solusi |
+|--------|----------|--------|
+| `curl: (56) Connection reset` saat login | Backend masih running seed | Tunggu 60–120s, cek `docker logs arcom_backend` sampai `Uvicorn running` |
+| Backend restart loop, error enum | Volume DB lama tidak compatible | `docker compose down -v && docker compose up -d` |
+| Login UI tidak respond | `NEXT_PUBLIC_API_URL` tidak reachable dari browser | Cek DevTools Network tab. Akses UI dengan hostname/IP yang sama dengan API |
+| Login 401 padahal password benar | Akun belum diseed atau password berubah | `docker exec arcom_backend python seed.py` |
+| `openclaw_reachable: false` | Gateway bind 127.0.0.1, container tidak bisa reach | Setup socat relay (§4.2) |
+| `openclaw_embed_reachable: false` | Upstream LLM tidak ada `/v1/embeddings` | Set `OPENCLAW_EMBEDDINGS_ENABLED=false` (chat tetap jalan) |
+| `Failed to fetch` / CORS error di browser | UI dari host berbeda dengan API | `lib/api.ts` sudah handle otomatis. Restart frontend `docker restart arcom_frontend` |
+| Frontend 502 / blank ~30s | npm install masih jalan first‑boot | `docker logs arcom_frontend` → tunggu `✓ Ready` |
+| `password cannot be longer than 72 bytes` | bcrypt 5.x incompatible | `bcrypt==4.0.1` sudah dipin |
+
+---
+
+# How to Use this App
+
+## Akun Pilot (Login)
+
+Saat pertama kali start, 4 akun pilot otomatis diseed:
+
+| Role | Employee ID | Password | Akses |
+|------|-------------|----------|-------|
+| Junior Engineer | `EMP001` | `Junior@12345` | Buat case, lihat AI, log trial, draft Why‑Why |
+| Senior Engineer | `EMP002` | `Senior@12345` | Junior + konfirmasi root cause, approve Why‑Why |
+| Engineering Manager | `EMP003` | `Manager@12345` | Senior + dashboard KPI, knowledge metrics |
+| Admin | `EMP004` | `Admin@12345` | User CRUD, audit log, CSV import |
+
+> ⚠ Self‑registration **tidak tersedia** (sesuai PRD §4 RBAC ISP/SIDM). Akun baru dibuat oleh **Admin** via `/admin/users`.
+
+**Cara login UI:**
+1. Buka http://localhost:3000 (atau http://IP_SERVER:3000 dari laptop pilot)
+2. Klik tombol **"Belum punya akun / Lihat akun pilot demo"** di bawah form
+3. Pilih salah satu akun → otomatis terisi Employee ID + Password
+4. Klik **Masuk**
+
+---
+
+## A. Workflow Junior Engineer (Engineer Baru)
+
+> Skenario: Junior baru menemukan abnormality **"Nozzle Clog"** di model `X-123` line A pada shift PAGI. Total durasi flow: ±15 menit (dengan AI Openclaw, ±5 menit dengan fallback).
+
+### Step 1 — Login sebagai Junior
+
+- Login `EMP001` / `Junior@12345` → masuk ke Dashboard.
+- Dashboard menampilkan jumlah case Terbuka / Investigasi / Selesai dan 5 case terbaru.
+
+### Step 2 — Buat Case Baru (F‑001)
+
+Klik tombol **"+ Buat Kasus Baru"** atau bottom nav **Baru**, isi:
+
+| Field | Wajib | Contoh |
+|-------|-------|--------|
+| Model | ✓ | `X-123` (atau dropdown `IJP-A1`, `SIDM-C1`, …) |
+| Process | ✓ | `Print` |
+| Line | ✓ | `A` |
+| Fatal Error | ✓ | `Nozzle Clog` |
+| Symptom | ✓ | `Tinta tidak keluar pada nozzle 3 dan 7 setelah 2 jam runtime`<br>(max 500 char) |
+| Severity | ✓ | `HIGH` |
+| Shift | – | `PAGI` |
+| Foto evidence | – | max 5 foto × 10MB (JPG/PNG/WebP) |
+| Temporary Action | – | mis. `Stop line, isolasi unit` |
+
+Klik **Buat Kasus**. Sistem akan:
+
+1. Generate Case ID **`IEI-YYYYMMDD-XXXX`**
+2. Auto‑embed kasus dan **cari kasus serupa** (F‑002) di background
+3. **Notifikasi Senior** jika severity HIGH/CRITICAL (bell icon di pojok kanan atas)
+4. Redirect ke halaman detail kasus
+
+### Step 3 — Pelajari Similar Cases (F‑002)
+
+Di halaman detail kasus, **panel Similar Cases** otomatis muncul:
+
+- Kartu kasus historis dengan **similarity %** (mis. `82%`)
+- Badge sumber: `openclaw` / `fallback` / `keyword`
+- Klik kartu → buka detail kasus historis (siapa investigator, root cause, countermeasure)
+- Klik **Useful** / **Not Relevant** → feedback dipakai untuk meningkatkan ranking (PRD F‑002)
+
+### Step 4 — Baca AI Recommendations (F‑003)
+
+Panel **AI Recommendations** menampilkan **3 hipotesis 4M1E**:
+
+```
+1. Feeder unit aus/kotor menyebabkan feed jam periodik
+   Category: Machine | Confidence: 60% | Trial Risk: LOW
+   Evidence:
+     - Symptom dilaporkan pada feeder section
+     - Kasus serupa IEI-20260512-0009 menyebutkan roller wear
+   Suggested Verification:
+     - Inspect roller wear pattern
+     - Cek tension feeder
+     - Periksa ketebalan material vs spec
+
+2. Variasi material …
+3. Parameter metode feeding …
+```
+
+- **Confidence + Evidence + Verification wajib ditampilkan** (PRD AI Safety rule)
+- Sumber: badge `openclaw` (AI nyata) atau `fallback` (rule‑based 4M1E)
+- Klik **Useful** / **Already Tried** untuk feedback
+
+### Step 5 — Generate & Approve Trial Queue (F‑004)
+
+Di panel **Trial Queue** → klik **Generate dari AI**:
+
+- Sistem score setiap trial: `priority = (1/risk) × success_rate × (1/time)`
+- Trial **LOW risk** muncul duluan
+- Klik ↑↓ untuk reorder manual
+- Klik **Setujui Queue** → status `DRAFT → APPROVED`
+
+> ⚠ Kalau ada trial **HIGH risk**, Junior **tidak bisa approve sendiri** — perlu Senior.
+
+### Step 6 — Log Trial (F‑005)
+
+Klik **Log Trial** dari item queue (form auto‑filled):
+
+| Field | Catatan |
+|-------|---------|
+| Trial Action | auto‑filled dari queue |
+| Observation | **min 20 karakter** |
+| Outcome | `IMPROVED` / `NO_CHANGE` / `WORSENED` / `INCONCLUSIVE` |
+| Improvement % | numeric, 0–100 |
+| Time spent (min) | berapa menit dihabiskan |
+| Scrap Impact + Qty | jika ada scrap |
+| Foto evidence | max 3 foto |
+| Risk level | dari queue, dapat diubah |
+
+Saat outcome **IMPROVED/WORSENED**, status case otomatis advance ke `TRIAL_RUNNING`.
+
+> Tip offline: jika WiFi mati saat ngetik, draft tersimpan di browser localStorage. Saat online, klik **Submit** akan kirim ulang.
+
+### Step 7 — Update Status
+
+Tombol di panel Status:
+- `OPEN → INVESTIGATING` (klik mulai investigasi)
+- `INVESTIGATING → SUSPECTED_CAUSE` (sudah punya hipotesis)
+- `SUSPECTED_CAUSE → TRIAL_RUNNING` (sudah jalan trial)
+- `TRIAL_RUNNING → MONITORING` (sudah verifikasi, tunggu konfirmasi Senior)
+
+`CONFIRMED` dan `ARCHIVED` hanya bisa di‑transition oleh Senior+.
+
+### Step 8 — Generate Why‑Why Draft (F‑006) — setelah root cause confirmed
+
+Setelah Senior konfirmasi root cause (Step B.2), Junior bisa buka link **Why‑Why Analysis** dari case detail atau langsung ke `/cases/:id/why-why`:
+
+1. Klik **Generate Why‑Why Draft** → AI buat ≥5 level Why × 4M1E + immediate countermeasure + corrective + preventive action (dalam ±30 detik via Openclaw, atau instant via fallback)
+2. Edit setiap field (Why pertanyaan & jawaban, category 4M1E)
+3. Klik **Simpan Draft** untuk auto‑save sementara
+4. Klik **Kirim untuk Persetujuan** → status `PENDING_APPROVAL`, Senior dapat notifikasi
+
+---
+
+## B. Workflow Senior Engineer
+
+> Skenario: Senior `EMP002` menerima notifikasi case HIGH severity dari Junior dan harus konfirmasi root cause + approve Why‑Why.
+
+### Step 1 — Lihat Notifikasi
+
+- Klik **bell icon** di kanan atas (badge angka = unread count)
+- Daftar notifikasi:
+  - `case.high_severity` → kasus baru HIGH severity
+  - `why_why.pending_approval` → Why‑Why menunggu approve
+- Klik **Lihat kasus** untuk langsung navigate
+
+### Step 2 — Konfirmasi Root Cause (Senior‑Only)
+
+Buka case → scroll ke panel hijau **"Konfirmasi Root Cause"**:
+
+1. Isi root cause (min 10 karakter), mis. `Roller feeder #2 aus menyebabkan slip → feed jam`
+2. Klik **Konfirmasi Root Cause**
+3. Sistem set `status = CONFIRMED`, `confirmed_by = Anda`, `why_why_eligible = true`
+4. Auto‑embed root cause ke knowledge base (background task)
+
+### Step 3 — Approve / Reject Why‑Why
+
+Saat dapat notifikasi `why_why.pending_approval`:
+
+1. Buka case → klik **Why‑Why Analysis**
+2. Review setiap level Why + 4M1E mapping
+3. Edit langsung kalau ada koreksi minor (status balik ke `DRAFT` kalau diedit)
+4. Klik **Setujui** → status `APPROVED` → auto‑embed ke knowledge base ✅
+5. Atau klik **Tolak** → masukkan komentar → status `REJECTED`, Junior dapat notifikasi untuk revisi
+
+### Step 4 — Archive case setelah monitoring
+
+Setelah trial monitoring stabil (mis. 1 minggu produksi normal):
+
+1. Di case detail, klik tombol **Archive** (status `CONFIRMED → ARCHIVED`)
+2. Sistem set `archived_at`, lakukan **consolidated embedding** (full narrative + trials + Why‑Why)
+3. Kasus jadi **read‑only** — knowledge tersimpan permanen untuk engineer lain
+
+---
+
+## C. Workflow Engineering Manager
+
+> Skenario: Manager `EMP003` perlu melihat metrics KPI dan trend investigasi.
+
+### Step 1 — Dashboard KPI
+
+Login → Dashboard menampilkan kartu Manager‑only:
+
+| KPI | Sumber |
+|-----|--------|
+| **AI Berguna %** | `useful_feedback / total_feedback` |
+| **Avg TTRC (jam)** | `mean(case.confirmed_at - case.created_at)` |
+| Indexed cases | Total kasus ber‑embedding |
+| Archived cases | Total kasus ARCHIVED |
+
+### Step 2 — Knowledge Base Search
+
+Bottom nav **KB** → halaman `/knowledge-base`:
+
+- Kotak search → cari symptom / fatal error / root cause (mis. `nozzle clog`)
+- Filter model
+- Hasil menampilkan kartu dengan **similarity %** (vector) atau keyword match
+- Kartu menunjukkan ikon `✓ Why-Why` jika kasus punya Why‑Why approved
+- Klik kartu → buka case detail historis (read‑only kalau ARCHIVED)
+
+### Step 3 — Review semua case
+
+- Bottom nav **Kasus** → lihat semua case dengan filter status
+- Filter berdasarkan status, model, severity, dst
+
+---
+
+## D. Workflow Admin
+
+> Skenario: Admin `EMP004` perlu setup user baru dan migrasi data historis dari Excel/CSV.
+
+### Step 1 — Buat User Baru
+
+Bottom nav **Admin** → **Manajemen User** (`/admin/users`):
+
+1. Isi form:
+   - `employee_id` (unik, mis. `EMP005`)
+   - `full_name`
+   - `email` (opsional)
+   - `division` (opsional, mis. `IJP-Production`)
+   - `role`: `JUNIOR` / `SENIOR` / `MANAGER` / `ADMIN`
+   - `password` (default: `changeme123`, user wajib ganti pada login pertama — TODO Phase 2)
+2. Klik **Tambah User**
+3. User langsung bisa login
+
+Klik **Aktif/Nonaktif** untuk soft delete (kasus existing milik user tetap utuh).
+
+### Step 2 — Batch Import Historical Data (`/admin/import`)
+
+Untuk migrasi Excel/CSV historis (mis. Why‑Why 2 tahun terakhir):
+
+1. Siapkan file CSV dengan kolom **wajib**:
+   - `model, fatal_error, symptom, root_cause`
+   - Kolom **opsional**: `process, line, title, severity, temporary_action`
+2. Upload file → **centang "Dry-run"** dulu untuk validasi (TIDAK insert)
+3. Lihat hasil validasi (total rows, errors, warnings)
+4. Uncheck dry-run → klik **Import** → kasus dibuat dengan status `ARCHIVED` + `confirmed_root_cause` di‑set + auto‑embed ke knowledge base
+
+Contoh CSV:
+
+```csv
+model,fatal_error,symptom,root_cause,process,line
+IJP-A1,Nozzle Clog,"Nozzle 5 buntu setelah 4 jam","Filter inlet kotor, diganti","Print","A"
+SIDM-C1,Motor Fault,"Motor servo overheat","Cooling fan rusak, replace","Assembly","C"
+```
+
+### Step 3 — Audit Log (`/admin/audit`)
+
+Lihat semua aksi terjadi di sistem (immutable log):
+
+- `auth.login_success` / `auth.login_failed`
+- `case.created` / `case.status_changed` / `case.root_cause_confirmed`
+- `trial_queue.approved`
+- `why_why.submitted` / `why_why.approved` / `why_why.rejected`
+- `case.photo_uploaded`
+
+Filter by event name. Audit log **tidak bisa di‑edit/delete** dari UI maupun API.
+
+### Step 4 — AI Settings (`/admin/settings`)
+
+Menampilkan env vars AI aktif (read‑only di UI). Untuk ubah, edit `.env` di server lalu `docker compose restart backend`.
+
+---
+
+## Tips Penggunaan
+
+| Tip | Detail |
+|-----|--------|
+| **Bahasa Indonesia first** | Semua UI label & AI response default Bahasa Indonesia. Engineer factory lebih nyaman. |
+| **Mobile‑first** | UI dioptimasi untuk tablet 10" / smartphone. Tombol min height 48px (touch target). |
+| **Offline trial draft** | Saat WiFi mati di line, trial draft otomatis disimpan di browser. Reload saat online untuk submit. |
+| **AI source badge** | Selalu lihat badge `openclaw` vs `fallback` di setiap rekomendasi. Fallback = no‑LLM mode, akurasi lebih rendah. |
+| **HIGH severity → Senior notif** | Selalu set severity benar saat buat case. Sistem otomatis notif Senior. |
+| **Feedback loop** | Klik **Useful** / **Not Relevant** sesering mungkin — sistem belajar dari feedback. |
+| **Knowledge base growth** | Setiap kasus yang di‑archive memperkaya KB. Target pilot: archive ≥20 kasus dalam minggu pertama. |
+| **Why‑Why approval gate** | Why‑Why baru ter‑index ke KB **setelah Senior approve**. Encourage Senior untuk review tepat waktu. |
+
+---
+
+# Reference
+
+## API Endpoints — Ringkasan
+
+| Method | Path | Role | Fitur |
+|--------|------|------|-------|
+| POST | `/api/auth/login` | — | Login |
+| GET | `/api/auth/me` | * | Profil |
+| POST | `/api/cases` | * | Buat case (F‑001) |
+| GET | `/api/cases` | * | List + filter |
+| GET | `/api/cases/{id}` | * | Detail |
+| POST | `/api/cases/{id}/photos` | * | Upload foto |
+| POST | `/api/cases/{id}/confirm` | Senior+ | Konfirmasi root cause |
+| POST | `/api/cases/{id}/status` | * | Status transition |
+| GET | `/api/cases/{id}/timeline` | * | Timeline aktivitas |
+| GET/PUT | `/api/cases/{id}/trial-queue` | * | Queue read/save |
+| POST | `/api/cases/{id}/trial-queue/approve` | * | Approve queue |
+| GET/POST | `/api/cases/{id}/trials` | * | List/Log trial (F‑005) |
+| GET/PUT | `/api/cases/{id}/why-why` | * | Why‑Why read/edit |
+| POST | `/api/cases/{id}/why-why/submit` | * | Submit untuk approval |
+| POST | `/api/cases/{id}/why-why/approve` | Senior+ | Approve/reject |
+| POST | `/api/ai/similar-cases` | * | F‑002 |
+| POST | `/api/ai/recommendations` | * | F‑003 |
+| POST | `/api/ai/trial-priority` | * | F‑004 |
+| POST | `/api/ai/why-why-draft` | * | F‑006 generate |
+| POST | `/api/ai/feedback` | * | AI feedback |
+| GET | `/api/ai/health` | * | Provider status |
+| GET | `/api/knowledge/search` | * | KB search (F‑007) |
+| GET | `/api/knowledge/metrics` | Manager+ | KB metrics |
+| GET | `/api/notifications` | * | List notifikasi |
+| POST | `/api/notifications/{id}/read` | * | Mark read |
+| GET/POST/PATCH | `/api/admin/users` | Admin | CRUD user |
+| GET | `/api/admin/audit` | Admin | Audit log |
+| POST | `/api/admin/import` | Admin | CSV import |
+| GET | `/api/admin/kpis` | Manager+ | KPI metrics |
+
+Swagger lengkap: **http://localhost:8000/docs**
+
+## Project Structure
+
+```
+arcom/
+├── backend/
+│   ├── app/
+│   │   ├── core/              # config, db, security, logging
+│   │   ├── models/            # ORM: User, Case, Trial, WhyWhy, …
+│   │   ├── schemas/           # Pydantic v2
+│   │   ├── routers/           # auth, cases, ai, trials, why_why,
+│   │   │                      # knowledge, notifications, admin
+│   │   ├── services/          # business logic (embed, knowledge,
+│   │   │                      # trial_priority, why_why, kpi, import)
+│   │   ├── ai/
+│   │   │   ├── providers.py   # Openclaw + Fallback
+│   │   │   └── prompts/
+│   │   └── main.py
+│   ├── alembic/versions/      # 001 → 005
+│   ├── tests/                 # pytest
+│   ├── seed.py, seed_cases.py, embed_existing.py
+│   └── Dockerfile
+├── frontend/
+│   ├── app/(app)/             # dashboard, cases/, knowledge-base/, admin/
+│   ├── components/            # ai/, trials/, nav/, ui/
+│   ├── lib/                   # api.ts, auth.ts, useAuth.ts, trialDraft.ts
+│   └── next.config.mjs
+├── deploy/
+│   └── openclaw-relay.service # systemd unit untuk relay
+├── docker-compose.yml
+├── pitchdeck.md
+├── PRD.md
+├── sprints/
+└── README.md
+```
+
+## Smoke Test (CLI lengkap)
+
+```bash
+# Health
 curl http://localhost:8000/api/health
 
 # Login → ambil token
@@ -229,266 +664,25 @@ curl -H "Authorization: Bearer $TOKEN" http://localhost:8000/api/auth/me
 # List cases
 curl -H "Authorization: Bearer $TOKEN" http://localhost:8000/api/cases
 
-# Knowledge base search
-curl -H "Authorization: Bearer $TOKEN" "http://localhost:8000/api/knowledge/search?q=nozzle"
-
 # AI provider status
 curl -H "Authorization: Bearer $TOKEN" http://localhost:8000/api/ai/health
+
+# Knowledge base search
+curl -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:8000/api/knowledge/search?q=nozzle"
+
+# Trial priority (ambil case_id dari list di atas)
+curl -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  http://localhost:8000/api/ai/trial-priority \
+  -d '{"case_id":"<uuid_case>"}'
+
+# AI recommendations (real LLM jika Openclaw aktif)
+curl -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  http://localhost:8000/api/ai/recommendations \
+  -d '{"case_id":"<uuid_case>"}'
 ```
 
----
-
-## 6. Local Development (tanpa Docker)
-
-### Backend
-
-```bash
-cd backend
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-
-# Setup DB (butuh PostgreSQL + pgvector lokal)
-export DATABASE_URL=postgresql://arcom_user:arcom_pass@localhost:5432/arcom_db
-alembic upgrade head
-python seed.py
-python seed_cases.py
-
-# Jalankan
-uvicorn app.main:app --reload
-```
-
-### Frontend
-
-```bash
-cd frontend
-npm install
-echo "NEXT_PUBLIC_API_URL=http://localhost:8000" > .env.local
-npm run dev
-```
-
-### Run tests
-
-```bash
-cd backend
-pytest -q
-```
-
----
-
-## 7. Openclaw Gateway (opsional, untuk AI penuh)
-
-Tanpa Openclaw, sistem tetap jalan menggunakan **deterministic local fallback** (embedding hash + rule‑based 4M1E generator). Untuk AI penuh:
-
-### Catatan penting — Gateway bind & embeddings
-
-Openclaw Gateway secara default bind ke `127.0.0.1` (loopback), sehingga **tidak dapat dijangkau dari container Docker**. Dua solusi:
-
-**A. Relay via socat** (paling sederhana, sudah dipakai pada deploy ini):
-
-```bash
-sudo apt-get install -y socat
-# Jalankan relay 0.0.0.0:18790 → 127.0.0.1:18789
-nohup socat TCP-LISTEN:18790,fork,reuseaddr,bind=0.0.0.0 TCP:127.0.0.1:18789 \
-  > /tmp/openclaw-relay.log 2>&1 &
-# Pakai port 18790 di .env:
-# OPENCLAW_BASE_URL=http://host.docker.internal:18790/v1
-```
-
-Atau jadikan systemd service (lihat `deploy/openclaw-relay.service` di repo).
-
-**B. Konfigurasi Openclaw bind 0.0.0.0** (jika gateway mendukung — periksa dokumentasi versi anda).
-
-### Embedding tidak didukung oleh upstream LLM?
-
-Beberapa upstream provider Openclaw (mis. model lokal kecil) tidak expose endpoint `/v1/embeddings`. Set:
-
-```bash
-OPENCLAW_EMBEDDINGS_ENABLED=false
-```
-
-Hasilnya: chat completion (recommendations & Why‑Why) tetap pakai LLM Openclaw, sedangkan embedding (similar cases & KB search) pakai fallback deterministik 1536d. Ini direkomendasikan untuk pilot.
-
-### Langkah setup
-
-1. **Install & jalankan Openclaw Gateway** pada host:
-
-   ```bash
-   openclaw gateway --port 18789
-   ```
-
-2. **Aktifkan endpoint OpenAI‑compatible** di `~/.openclaw/openclaw.json`:
-
-   ```json
-   {
-     "gateway": {
-       "auth": { "mode": "token", "token": "GANTI_TOKEN" },
-       "http": {
-         "endpoints": {
-           "chatCompletions": { "enabled": true },
-           "responses":       { "enabled": true }
-         }
-       }
-     }
-   }
-   ```
-
-3. **Konfigurasi upstream provider** di Openclaw (OpenAI / Ollama / Anthropic / lokal).
-
-4. Set di `.env`:
-
-   ```bash
-   AI_ENABLED=true
-   # Gunakan port relay (lihat di atas), bukan 18789
-   OPENCLAW_BASE_URL=http://host.docker.internal:18790/v1
-   OPENCLAW_TOKEN=token-dari-openclaw.json
-   # Set false jika upstream tidak punya endpoint embeddings
-   OPENCLAW_EMBEDDINGS_ENABLED=false
-   ```
-
-5. Restart backend: `docker compose restart backend`.
-
-Verifikasi:
-
-```bash
-curl -H "Authorization: Bearer $JWT" http://localhost:8000/api/ai/health
-```
-
-Output:
-
-```json
-{
-  "openclaw_configured": true,
-  "openclaw_reachable": true,
-  "openclaw_chat_reachable": true,
-  "openclaw_embed_reachable": false,
-  "embeddings_via_primary": false,
-  "fallback_available": true
-}
-```
-
-Response `/api/ai/recommendations` akan punya `source: "openclaw"`.
-
----
-
-## 8. Project Structure
-
-```
-arcom/
-├── backend/
-│   ├── app/
-│   │   ├── core/              # config, db, security, logging
-│   │   ├── models/            # ORM: User, Case, Trial, WhyWhy, ...
-│   │   ├── schemas/           # Pydantic v2
-│   │   ├── routers/           # auth, cases, ai, trials, why_why,
-│   │   │                      # knowledge, notifications, admin
-│   │   ├── services/          # business logic, AI providers
-│   │   │   ├── embedding_service.py
-│   │   │   ├── knowledge_service.py
-│   │   │   ├── knowledge_search.py
-│   │   │   ├── why_why_service.py
-│   │   │   ├── trial_priority.py
-│   │   │   ├── timeline_service.py
-│   │   │   ├── import_service.py
-│   │   │   └── kpi_service.py
-│   │   ├── ai/
-│   │   │   ├── providers.py   # Openclaw + Fallback
-│   │   │   └── prompts/       # System prompts
-│   │   └── main.py
-│   ├── alembic/versions/      # 001 → 005
-│   ├── tests/                 # pytest
-│   ├── seed.py, seed_cases.py, embed_existing.py
-│   ├── requirements.txt
-│   └── Dockerfile
-├── frontend/
-│   ├── app/(app)/
-│   │   ├── dashboard/
-│   │   ├── cases/[id]/
-│   │   │   ├── trials/
-│   │   │   └── why-why/
-│   │   ├── knowledge-base/
-│   │   └── admin/
-│   │       ├── users/
-│   │       ├── import/
-│   │       ├── audit/
-│   │       └── settings/
-│   ├── components/
-│   │   ├── ai/                # SimilarCasesPanel, AIRecommendationsPanel
-│   │   ├── trials/            # TrialQueuePanel, LogTrialModal, CaseTimeline
-│   │   ├── nav/               # BottomNav, NotificationBell
-│   │   └── ui/                # StatusBadge, Toast, OfflineBanner, ErrorBoundary
-│   ├── lib/
-│   │   ├── api.ts             # API client (auth, cases, AI, trials, why-why, KB, admin)
-│   │   ├── auth.ts
-│   │   ├── useAuth.ts
-│   │   └── trialDraft.ts      # offline trial draft
-│   ├── next.config.mjs
-│   └── Dockerfile
-├── docker-compose.yml
-├── pitchdeck.md               # Pitch deck (problem, solution, AI workflow, stack, impact)
-├── PRD.md
-├── sprints/
-│   ├── sprint-01-foundation.md
-│   ├── sprint-02-case-management.md
-│   ├── sprint-03-ai-core.md
-│   ├── sprint-04-investigation-workflow.md
-│   └── sprint-05-completion-launch.md
-└── README.md                  # ← file ini
-```
-
----
-
-## 9. API Endpoints — Ringkasan
-
-| Method | Path | Role | Fitur |
-|--------|------|------|-------|
-| POST | `/api/auth/login` | — | Login |
-| GET | `/api/auth/me` | * | Profil |
-| POST | `/api/cases` | * | Buat case (F‑001) |
-| GET | `/api/cases` | * | List + filter |
-| GET | `/api/cases/{id}` | * | Detail |
-| POST | `/api/cases/{id}/photos` | * | Upload foto |
-| POST | `/api/cases/{id}/confirm` | Senior+ | Konfirmasi root cause |
-| POST | `/api/cases/{id}/status` | * | Status transition |
-| GET | `/api/cases/{id}/timeline` | * | Timeline |
-| GET/PUT | `/api/cases/{id}/trial-queue` | * | Queue read/save |
-| POST | `/api/cases/{id}/trial-queue/approve` | * | Approve queue |
-| GET/POST | `/api/cases/{id}/trials` | * | List/Log trial (F‑005) |
-| GET/PUT | `/api/cases/{id}/why-why` | * | Why‑Why read/edit |
-| POST | `/api/cases/{id}/why-why/submit` | * | Submit approval |
-| POST | `/api/cases/{id}/why-why/approve` | Senior+ | Approve/reject |
-| POST | `/api/ai/similar-cases` | * | F‑002 |
-| POST | `/api/ai/recommendations` | * | F‑003 |
-| POST | `/api/ai/trial-priority` | * | F‑004 |
-| POST | `/api/ai/why-why-draft` | * | F‑006 generate |
-| POST | `/api/ai/feedback` | * | AI feedback |
-| GET | `/api/ai/health` | * | Provider status |
-| GET | `/api/knowledge/search` | * | KB search (F‑007) |
-| GET | `/api/knowledge/metrics` | Manager+ | KB metrics |
-| GET | `/api/notifications` | * | List |
-| POST | `/api/notifications/{id}/read` | * | Mark read |
-| GET/POST/PATCH | `/api/admin/users` | Admin | CRUD user |
-| GET | `/api/admin/audit` | Admin | Audit log |
-| POST | `/api/admin/import` | Admin | CSV import |
-| GET | `/api/admin/kpis` | Manager+ | KPI metrics |
-
-Swagger lengkap: **http://localhost:8000/docs**
-
----
-
-## 10. Troubleshooting
-
-| Gejala | Penyebab umum | Solusi |
-|--------|---------------|--------|
-| Backend restart loop saat migration | Volume DB lama tidak compatible | `docker compose down -v && docker compose up -d` |
-| `password cannot be longer than 72 bytes` | bcrypt mismatch | Pastikan `bcrypt==4.0.1` di requirements (sudah di‑pin) |
-| Frontend 502 / blank | Next.js belum siap (npm install) | Tunggu ~30s saat first boot; cek `docker logs arcom_frontend` |
-| AI `source: "fallback"` terus | Openclaw down / belum dikonfigurasi | Cek `/api/ai/health` → `openclaw_reachable` |
-| Similar cases kosong | KB masih < 10 kasus | UI munculkan warning; tambah case atau import CSV historis |
-| Login gagal | Password berubah pasca seed | `docker exec arcom_postgres psql -U arcom_user -d arcom_db -c "DELETE FROM users"` lalu restart backend |
-
----
-
-## 11. Sprint Roadmap
+## Sprint Roadmap
 
 | Sprint | Scope | Status | PR |
 |--------|-------|--------|----|
@@ -498,12 +692,10 @@ Swagger lengkap: **http://localhost:8000/docs**
 | 4 — Investigation Workflow | F‑004 trials, F‑005, status machine, F‑007 indexing | ✅ | #9 |
 | 5 — Completion & Launch | F‑006 Why‑Why, KB search, admin, NFR, deploy | ✅ | #10 |
 
----
+## Dokumen Terkait
 
-## 12. Dokumen terkait
-
-- **[pitchdeck.md](./pitchdeck.md)** — Problem, solution, AI workflow, tech stack, future development
-- **[PRD.md](./PRD.md)** — Product Requirements Document
+- **[pitchdeck.md](./pitchdeck.md)** — Problem, solution, AI agent workflow, tech stack, future development & impact
+- **[PRD.md](./PRD.md)** — Product Requirements Document (v1.0 Draft, Brian Ramdhani)
 - **[sprints/](./sprints/)** — Per‑sprint detail (Sprint 1 → 5)
 
 ---
