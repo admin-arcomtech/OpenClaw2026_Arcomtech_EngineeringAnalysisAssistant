@@ -333,16 +333,32 @@ def submit_feedback(
 def ai_health(current_user: User = Depends(get_current_user)):
     """Reports which AI provider is active right now."""
     provider = get_provider()
-    primary_ok = False
+    primary_chat_ok = False
+    primary_embed_ok = False
     if provider.primary:
+        # Probe chat (cheap dummy completion)
         try:
-            provider.primary.embed("ping")
-            primary_ok = True
+            provider.primary.complete_json(
+                "You are an echo.",
+                '{"task":"ping"}',
+                schema_hint='{"ok": true}',
+            )
+            primary_chat_ok = True
         except Exception:
-            primary_ok = False
+            primary_chat_ok = False
+        # Probe embed only if enabled
+        if provider.embeddings_via_primary:
+            try:
+                provider.primary.embed("ping")
+                primary_embed_ok = True
+            except Exception:
+                primary_embed_ok = False
     return {
         "openclaw_configured": provider.primary is not None,
-        "openclaw_reachable": primary_ok,
+        "openclaw_reachable": primary_chat_ok,
+        "openclaw_chat_reachable": primary_chat_ok,
+        "openclaw_embed_reachable": primary_embed_ok,
+        "embeddings_via_primary": provider.embeddings_via_primary,
         "fallback_available": True,
         "openclaw_base_url": settings.OPENCLAW_BASE_URL if provider.primary else None,
     }

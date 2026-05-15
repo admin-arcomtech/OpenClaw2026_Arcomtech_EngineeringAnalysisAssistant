@@ -46,6 +46,7 @@ services:
       OPENCLAW_EMBEDDING_BACKEND_MODEL: ${OPENCLAW_EMBEDDING_BACKEND_MODEL:-}
       OPENCLAW_LLM_TIMEOUT_S: ${OPENCLAW_LLM_TIMEOUT_S:-60}
       OPENCLAW_EMBEDDING_TIMEOUT_S: ${OPENCLAW_EMBEDDING_TIMEOUT_S:-30}
+      OPENCLAW_EMBEDDINGS_ENABLED: ${OPENCLAW_EMBEDDINGS_ENABLED:-false}
       EMBEDDING_DIM: ${EMBEDDING_DIM:-1536}
       UPLOAD_DIR: /tmp/arcom_uploads
     extra_hosts:
@@ -57,7 +58,7 @@ services:
         alembic upgrade head &&
         python seed.py &&
         python seed_cases.py &&
-        python embed_existing.py &&
+        (python embed_existing.py || echo 'embed_existing failed, continuing') &&
         uvicorn app.main:app --host 0.0.0.0 --port 8000
       "
     volumes:

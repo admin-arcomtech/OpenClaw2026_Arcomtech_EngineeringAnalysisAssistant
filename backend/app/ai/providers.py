@@ -269,13 +269,14 @@ class AIProvider:
     Single entry-point used by routers/services.
     """
 
-    def __init__(self, primary: Optional[OpenclawProvider], fallback: LocalFallbackProvider):
+    def __init__(self, primary: Optional[OpenclawProvider], fallback: LocalFallbackProvider, embeddings_via_primary: bool = True):
         self.primary = primary
         self.fallback = fallback
+        self.embeddings_via_primary = embeddings_via_primary
 
     def embed(self, text: str) -> tuple[List[float], str]:
         """Returns (vector, source_tag)."""
-        if self.primary:
+        if self.primary and self.embeddings_via_primary:
             try:
                 return self.primary.embed(text), "openclaw"
             except Exception:
@@ -283,7 +284,7 @@ class AIProvider:
         return self.fallback.embed(text), "fallback"
 
     def embed_batch(self, texts: List[str]) -> tuple[List[List[float]], str]:
-        if self.primary:
+        if self.primary and self.embeddings_via_primary:
             try:
                 return self.primary.embed_batch(texts), "openclaw"
             except Exception:
@@ -322,5 +323,9 @@ def get_provider() -> AIProvider:
     else:
         logger.info("AI primary: disabled, using local fallback only")
 
-    _provider_instance = AIProvider(primary=primary, fallback=fallback)
+    _provider_instance = AIProvider(
+        primary=primary,
+        fallback=fallback,
+        embeddings_via_primary=settings.OPENCLAW_EMBEDDINGS_ENABLED,
+    )
     return _provider_instance

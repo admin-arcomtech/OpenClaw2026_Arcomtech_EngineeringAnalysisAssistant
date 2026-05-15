@@ -30,6 +30,10 @@ class Settings(BaseSettings):
     EMBEDDING_DIM: int = 1536
     # If false, skip Openclaw and use deterministic fallback only
     AI_ENABLED: bool = True
+    # If false, embeddings always use local deterministic fallback (chat still
+    # uses Openclaw if configured). Useful when upstream LLM doesn't expose an
+    # embedding endpoint.
+    OPENCLAW_EMBEDDINGS_ENABLED: bool = False
 
     @property
     def cors_origins_list(self) -> List[str]:

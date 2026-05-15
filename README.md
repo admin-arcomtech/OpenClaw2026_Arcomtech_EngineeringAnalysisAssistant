@@ -279,6 +279,37 @@ pytest -q
 
 Tanpa Openclaw, sistem tetap jalan menggunakan **deterministic local fallback** (embedding hash + rule‑based 4M1E generator). Untuk AI penuh:
 
+### Catatan penting — Gateway bind & embeddings
+
+Openclaw Gateway secara default bind ke `127.0.0.1` (loopback), sehingga **tidak dapat dijangkau dari container Docker**. Dua solusi:
+
+**A. Relay via socat** (paling sederhana, sudah dipakai pada deploy ini):
+
+```bash
+sudo apt-get install -y socat
+# Jalankan relay 0.0.0.0:18790 → 127.0.0.1:18789
+nohup socat TCP-LISTEN:18790,fork,reuseaddr,bind=0.0.0.0 TCP:127.0.0.1:18789 \
+  > /tmp/openclaw-relay.log 2>&1 &
+# Pakai port 18790 di .env:
+# OPENCLAW_BASE_URL=http://host.docker.internal:18790/v1
+```
+
+Atau jadikan systemd service (lihat `deploy/openclaw-relay.service` di repo).
+
+**B. Konfigurasi Openclaw bind 0.0.0.0** (jika gateway mendukung — periksa dokumentasi versi anda).
+
+### Embedding tidak didukung oleh upstream LLM?
+
+Beberapa upstream provider Openclaw (mis. model lokal kecil) tidak expose endpoint `/v1/embeddings`. Set:
+
+```bash
+OPENCLAW_EMBEDDINGS_ENABLED=false
+```
+
+Hasilnya: chat completion (recommendations & Why‑Why) tetap pakai LLM Openclaw, sedangkan embedding (similar cases & KB search) pakai fallback deterministik 1536d. Ini direkomendasikan untuk pilot.
+
+### Langkah setup
+
 1. **Install & jalankan Openclaw Gateway** pada host:
 
    ```bash
@@ -307,13 +338,35 @@ Tanpa Openclaw, sistem tetap jalan menggunakan **deterministic local fallback** 
 
    ```bash
    AI_ENABLED=true
-   OPENCLAW_BASE_URL=http://host.docker.internal:18789/v1
+   # Gunakan port relay (lihat di atas), bukan 18789
+   OPENCLAW_BASE_URL=http://host.docker.internal:18790/v1
    OPENCLAW_TOKEN=token-dari-openclaw.json
+   # Set false jika upstream tidak punya endpoint embeddings
+   OPENCLAW_EMBEDDINGS_ENABLED=false
    ```
 
 5. Restart backend: `docker compose restart backend`.
 
-Verifikasi: response `/api/ai/recommendations` akan punya `source: "openclaw"`.
+Verifikasi:
+
+```bash
+curl -H "Authorization: Bearer $JWT" http://localhost:8000/api/ai/health
+```
+
+Output:
+
+```json
+{
+  "openclaw_configured": true,
+  "openclaw_reachable": true,
+  "openclaw_chat_reachable": true,
+  "openclaw_embed_reachable": false,
+  "embeddings_via_primary": false,
+  "fallback_available": true
+}
+```
+
+Response `/api/ai/recommendations` akan punya `source: "openclaw"`.
 
 ---
 
