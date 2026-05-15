@@ -9,23 +9,31 @@ import { StatusBadge, SeverityBadge } from "@/components/ui/StatusBadge";
 import { useToast } from "@/components/ui/Toast";
 import { SimilarCasesPanel } from "@/components/ai/SimilarCasesPanel";
 import { AIRecommendationsPanel } from "@/components/ai/AIRecommendationsPanel";
+import { TrialQueuePanel } from "@/components/trials/TrialQueuePanel";
+import { CaseTimeline } from "@/components/trials/CaseTimeline";
 
 const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
-const VALID_NEXT: Record<CaseStatus, CaseStatus[]> = {
-  OPEN:              ["INVESTIGATING"],
-  INVESTIGATING:     ["SUSPECTED_CAUSE", "OPEN"],
-  SUSPECTED_CAUSE:   ["TRIAL_IN_PROGRESS", "INVESTIGATING"],
-  TRIAL_IN_PROGRESS: ["RESOLVED", "INVESTIGATING"],
-  RESOLVED:          ["CLOSED"],
-  CLOSED:            ["ARCHIVED"],
-  ARCHIVED:          [],
+const VALID_NEXT: Record<string, string[]> = {
+  OPEN: ["INVESTIGATING"],
+  INVESTIGATING: ["SUSPECTED_CAUSE", "OPEN"],
+  SUSPECTED_CAUSE: ["TRIAL_RUNNING", "TRIAL_IN_PROGRESS", "INVESTIGATING"],
+  TRIAL_RUNNING: ["MONITORING", "INVESTIGATING"],
+  TRIAL_IN_PROGRESS: ["MONITORING", "INVESTIGATING"],
+  MONITORING: ["CONFIRMED", "TRIAL_RUNNING"],
+  CONFIRMED: ["ARCHIVED"],
+  RESOLVED: ["CONFIRMED", "ARCHIVED"],
+  CLOSED: ["ARCHIVED"],
+  ARCHIVED: [],
 };
 
-const STATUS_LABEL: Record<CaseStatus, string> = {
-  OPEN: "Terbuka", INVESTIGATING: "Investigasi", SUSPECTED_CAUSE: "Tersangka Penyebab",
-  TRIAL_IN_PROGRESS: "Trial Berlangsung", RESOLVED: "Selesai", CLOSED: "Ditutup", ARCHIVED: "Diarsipkan",
+const STATUS_LABEL: Record<string, string> = {
+  OPEN: "Terbuka", INVESTIGATING: "Investigasi", SUSPECTED_CAUSE: "Tersangka",
+  TRIAL_RUNNING: "Trial", TRIAL_IN_PROGRESS: "Trial", MONITORING: "Monitoring",
+  CONFIRMED: "Terkonfirmasi", RESOLVED: "Selesai", CLOSED: "Ditutup", ARCHIVED: "Diarsipkan",
 };
+
+const SENIOR_ONLY = new Set(["CONFIRMED", "ARCHIVED"]);
 
 function InfoRow({ label, value }: { label: string; value?: string | null }) {
   if (!value) return null;
@@ -47,19 +55,35 @@ export default function CaseDetailPage() {
   const { showToast } = useToast();
   const [caseData, setCaseData] = useState<CaseOut | null>(null);
   const [statusLoading, setStatusLoading] = useState(false);
+  const [rootCause, setRootCause] = useState("");
+  const [confirming, setConfirming] = useState(false);
 
   useEffect(() => {
     if (!token || !id) return;
     api.getCase(token, id).then(setCaseData).catch(() => showToast("Gagal memuat kasus", "error"));
   }, [token, id]);
 
-  const advanceStatus = async (nextStatus: CaseStatus) => {
+  const handleConfirm = async () => {
+    if (!token || !caseData || rootCause.length < 10) return;
+    setConfirming(true);
+    try {
+      const updated = await api.confirmRootCause(token, caseData.id, rootCause);
+      setCaseData(updated);
+      showToast("Root cause dikonfirmasi", "success");
+    } catch (err) {
+      showToast(err instanceof ApiError ? err.message : "Gagal konfirmasi", "error");
+    } finally {
+      setConfirming(false);
+    }
+  };
+
+  const advanceStatus = async (nextStatus: string) => {
     if (!token || !caseData) return;
     setStatusLoading(true);
     try {
       const updated = await api.updateStatus(token, caseData.id, nextStatus);
       setCaseData(updated);
-      showToast(`Status diubah ke ${STATUS_LABEL[nextStatus]}`, "success");
+      showToast(`Status diubah ke ${STATUS_LABEL[nextStatus] ?? nextStatus}`, "success");
     } catch (err) {
       showToast(err instanceof ApiError ? err.message : "Gagal ubah status", "error");
     } finally {
@@ -77,7 +101,9 @@ export default function CaseDetailPage() {
     );
   }
 
-  const nextStatuses = VALID_NEXT[caseData.status] ?? [];
+  const nextStatuses = (VALID_NEXT[caseData.status] ?? []).filter(
+    (s) => !SENIOR_ONLY.has(s) || ["SENIOR", "MANAGER", "ADMIN"].includes(user?.role ?? "")
+  );
 
   return (
     <div className="p-4 pt-6 pb-8 space-y-4">
@@ -210,6 +236,35 @@ export default function CaseDetailPage() {
           </div>
         )}
       </div>
+
+      {/* Sprint 4 — Trial Queue */}
+      {token && user && (
+        <TrialQueuePanel token={token} caseId={caseData.id} userRole={user.role} onRefresh={() => api.getCase(token, caseData.id).then(setCaseData)} />
+      )}
+
+      {/* Sprint 4 — Confirm Root Cause (Senior+) */}
+      {token && user && ["SENIOR", "MANAGER", "ADMIN"].includes(user.role) && caseData.status !== "CONFIRMED" && caseData.status !== "ARCHIVED" && (
+        <div className="bg-green-50 border border-green-200 rounded-2xl p-4">
+          <p className="text-xs font-semibold text-green-700 uppercase tracking-wider mb-3">Konfirmasi Root Cause</p>
+          <textarea
+            value={rootCause}
+            onChange={(e) => setRootCause(e.target.value)}
+            rows={3}
+            placeholder="Jelaskan root cause yang terkonfirmasi (min 10 karakter)..."
+            className="w-full px-3 py-2 rounded-xl border border-green-200 text-sm resize-none min-h-touch"
+          />
+          <button
+            onClick={handleConfirm}
+            disabled={confirming || rootCause.length < 10}
+            className="mt-3 w-full py-2.5 bg-green-600 text-white font-semibold rounded-xl min-h-touch disabled:opacity-50"
+          >
+            {confirming ? "Menyimpan..." : "Konfirmasi Root Cause"}
+          </button>
+        </div>
+      )}
+
+      {/* Sprint 4 — Timeline */}
+      {token && <CaseTimeline token={token} caseId={caseData.id} />}
 
       {/* Sprint 3 — F-002 Similar Cases */}
       {token && <SimilarCasesPanel token={token} caseId={caseData.id} />}

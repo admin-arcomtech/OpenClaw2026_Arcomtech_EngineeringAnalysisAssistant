@@ -48,10 +48,13 @@ export type CaseStatus =
   | "OPEN"
   | "INVESTIGATING"
   | "SUSPECTED_CAUSE"
+  | "TRIAL_RUNNING"
+  | "MONITORING"
+  | "CONFIRMED"
+  | "ARCHIVED"
   | "TRIAL_IN_PROGRESS"
   | "RESOLVED"
-  | "CLOSED"
-  | "ARCHIVED";
+  | "CLOSED";
 
 export type Severity = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
 export type Shift = "PAGI" | "SIANG" | "MALAM";
@@ -294,4 +297,110 @@ export const api = {
     request<AIHealth>("/api/ai/health", {
       headers: { Authorization: `Bearer ${token}` },
     }),
+
+  // Sprint 4 — Trials & Queue
+  trialPriority: (token: string, case_id: string, manual_trial?: object) =>
+    request<{ trial_queue: TrialQueueItem[]; all_high_risk: boolean; warning?: string }>(
+      "/api/ai/trial-priority",
+      { method: "POST", headers: { Authorization: `Bearer ${token}` }, body: JSON.stringify({ case_id, manual_trial }) }
+    ),
+
+  getTrialQueue: (token: string, caseId: string) =>
+    request<{ items: TrialQueueItem[]; status: string }>(`/api/cases/${caseId}/trial-queue`, {
+      headers: { Authorization: `Bearer ${token}` },
+    }),
+
+  saveTrialQueue: (token: string, caseId: string, items: TrialQueueItem[], status = "DRAFT") =>
+    request<{ items: TrialQueueItem[]; status: string }>(`/api/cases/${caseId}/trial-queue`, {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ items, status }),
+    }),
+
+  approveTrialQueue: (token: string, caseId: string) =>
+    request<{ status: string; items: TrialQueueItem[] }>(`/api/cases/${caseId}/trial-queue/approve`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    }),
+
+  listTrials: (token: string, caseId: string) =>
+    request<TrialLog[]>(`/api/cases/${caseId}/trials`, {
+      headers: { Authorization: `Bearer ${token}` },
+    }),
+
+  createTrial: (token: string, caseId: string, data: TrialCreatePayload) =>
+    request<TrialLog>(`/api/cases/${caseId}/trials`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify(data),
+    }),
+
+  confirmRootCause: (token: string, caseId: string, root_cause: string) =>
+    request<CaseOut>(`/api/cases/${caseId}/confirm`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ root_cause }),
+    }),
+
+  getTimeline: (token: string, caseId: string) =>
+    request<TimelineEvent[]>(`/api/cases/${caseId}/timeline`, {
+      headers: { Authorization: `Bearer ${token}` },
+    }),
+};
+
+export type TrialQueueItem = {
+  id: string;
+  trial_action: string;
+  risk_level: string;
+  estimated_time_min: number;
+  historical_success_rate?: number | null;
+  destructive: boolean;
+  required_tools: string[];
+  priority_rank: number;
+  requires_senior_approval: boolean;
+  source: string;
+  skipped?: boolean;
+};
+
+export type TrialLog = {
+  id: string;
+  case_id: string;
+  sequence: number;
+  trial_action?: string;
+  observation?: string;
+  outcome?: string;
+  improvement_pct?: number;
+  time_spent_min?: number;
+  scrap_impact?: string;
+  scrap_qty?: number;
+  risk_level?: string;
+  destructive: boolean;
+  engineer_comment?: string;
+  performed_by_id?: string;
+  queue_item_id?: string;
+  created_at: string;
+};
+
+export type TrialCreatePayload = {
+  trial_action: string;
+  outcome: string;
+  observation: string;
+  improvement_pct?: number;
+  time_spent_min?: number;
+  scrap_impact?: string;
+  scrap_qty?: number;
+  risk_level?: string;
+  destructive?: boolean;
+  engineer_comment?: string;
+  queue_item_id?: string;
+  hypothesis?: string;
+};
+
+export type TimelineEvent = {
+  id: string;
+  event_type: string;
+  title: string;
+  detail?: string;
+  actor?: string;
+  created_at: string;
 };

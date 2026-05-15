@@ -1,10 +1,13 @@
 import type { CaseStatus, Severity } from "@/lib/api";
 
-const STATUS_CONFIG: Record<CaseStatus, { label: string; className: string }> = {
+const STATUS_CONFIG: Record<string, { label: string; className: string }> = {
   OPEN:              { label: "Terbuka",       className: "bg-blue-100 text-blue-700" },
   INVESTIGATING:     { label: "Investigasi",   className: "bg-yellow-100 text-yellow-700" },
   SUSPECTED_CAUSE:   { label: "Tersangka",     className: "bg-orange-100 text-orange-700" },
+  TRIAL_RUNNING:     { label: "Trial",         className: "bg-purple-100 text-purple-700" },
   TRIAL_IN_PROGRESS: { label: "Trial",         className: "bg-purple-100 text-purple-700" },
+  MONITORING:        { label: "Monitoring",    className: "bg-indigo-100 text-indigo-700" },
+  CONFIRMED:         { label: "Terkonfirmasi", className: "bg-green-100 text-green-700" },
   RESOLVED:          { label: "Selesai",       className: "bg-green-100 text-green-700" },
   CLOSED:            { label: "Ditutup",       className: "bg-gray-100 text-gray-600" },
   ARCHIVED:          { label: "Diarsipkan",    className: "bg-slate-100 text-slate-500" },
