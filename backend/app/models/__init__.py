@@ -3,6 +3,7 @@ from app.models.case import Case, CaseStatus, Severity, Shift, ScrapImpact, Risk
 from app.models.trial import Trial, TrialResult
 from app.models.case_photo import CasePhoto
 from app.models.audit_log import AuditLog
+from app.models.notification import Notification
 
 __all__ = [
     "User", "UserRole",
@@ -10,4 +11,5 @@ __all__ = [
     "Trial", "TrialResult",
     "CasePhoto",
     "AuditLog",
+    "Notification",
 ]
