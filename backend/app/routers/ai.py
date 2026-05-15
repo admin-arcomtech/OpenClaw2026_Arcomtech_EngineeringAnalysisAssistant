@@ -30,7 +30,9 @@ from app.schemas.ai import (
     SimilarCaseRequest,
     SimilarCaseResponse,
 )
+from app.schemas.trial import TrialPriorityRequest, TrialPriorityResponse
 from app.services.embedding_service import _case_text
+from app.services.trial_priority import build_trial_queue
 
 router = APIRouter(prefix="/api/ai", tags=["ai"])
 logger = logging.getLogger(__name__)
@@ -245,6 +247,25 @@ def recommendations(
         model_version=rec.model_version or "v1",
         created_at=rec.created_at,
     )
+
+
+# ─── F-004 Trial Priority ────────────────────────────────────────────────────
+
+@router.post("/trial-priority", response_model=TrialPriorityResponse)
+def trial_priority(
+    body: TrialPriorityRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    case = db.query(Case).filter((Case.id == body.case_id) | (Case.case_id == body.case_id)).first()
+    if not case:
+        raise HTTPException(status_code=404, detail="Kasus tidak ditemukan")
+
+    items, all_high, warning = build_trial_queue(db, case, body.manual_trial)
+    case.trial_queue = [i.model_dump() for i in items]
+    db.commit()
+
+    return TrialPriorityResponse(trial_queue=items, all_high_risk=all_high, warning=warning)
 
 
 # ─── Feedback (F-002 / F-003) ────────────────────────────────────────────────

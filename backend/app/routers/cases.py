@@ -11,7 +11,8 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.core.database import get_db
 from app.dependencies import get_current_user
-from app.models.case import Case, CaseStatus, VALID_TRANSITIONS
+from app.models.case import Case, CaseStatus, QueueStatus, can_transition
+from app.models.user import UserRole as UR
 from app.models.case_photo import CasePhoto
 from app.models.user import User, UserRole
 from app.schemas.case import (
@@ -22,6 +23,9 @@ from app.schemas.case import (
     DuplicateWarning,
     StatusUpdateRequest,
 )
+from app.schemas.trial import ConfirmRootCauseRequest, TrialQueueRequest, TimelineEvent
+from app.services.timeline_service import build_timeline
+from app.services.knowledge_service import embed_root_cause, embed_archived_case
 from app.services.audit_service import log_event
 from app.services.case_id import generate_case_id
 from app.services.embedding_service import embed_case
@@ -182,6 +186,7 @@ def get_case(
 def update_status(
     case_id: str,
     body: StatusUpdateRequest,
+    background: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -189,30 +194,128 @@ def update_status(
     if not case:
         raise HTTPException(status_code=404, detail="Kasus tidak ditemukan")
 
-    allowed = VALID_TRANSITIONS.get(case.status, [])
-    if body.status not in allowed:
+    try:
+        to_status = CaseStatus(body.status)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Status tidak valid: {body.status}")
+
+    if not can_transition(current_user.role, case.status, to_status):
         raise HTTPException(
-            status_code=400,
-            detail=f"Transisi dari '{case.status}' ke '{body.status}' tidak diizinkan. Transisi valid: {allowed}",
+            status_code=403 if to_status.value in ("CONFIRMED", "ARCHIVED") else 400,
+            detail=f"Transisi dari '{case.status}' ke '{to_status}' tidak diizinkan untuk role {current_user.role}",
         )
 
     old_status = case.status
-    case.status = body.status
+    case.status = to_status
     case.updated_at = datetime.now(timezone.utc)
+
+    if to_status == CaseStatus.ARCHIVED:
+        background.add_task(embed_archived_case, case.id)
 
     log_event(
         db,
         event="case.status_changed",
         user_id=current_user.id,
-        detail={
-            "case_id": case.case_id,
-            "from": old_status,
-            "to": body.status,
-            "note": body.note,
-        },
+        detail={"case_id": case.case_id, "from": str(old_status), "to": str(to_status), "note": body.note},
     )
     db.commit()
     return _load_case(db, case.id)
+
+
+@router.post("/{case_id}/confirm", response_model=CaseOut)
+def confirm_root_cause(
+    case_id: str,
+    body: ConfirmRootCauseRequest,
+    background: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if current_user.role not in (UR.SENIOR, UR.MANAGER, UR.ADMIN):
+        raise HTTPException(status_code=403, detail="Hanya Senior/Manager yang dapat mengonfirmasi root cause")
+
+    case = db.query(Case).filter((Case.id == case_id) | (Case.case_id == case_id)).first()
+    if not case:
+        raise HTTPException(status_code=404, detail="Kasus tidak ditemukan")
+
+    case.confirmed_root_cause = body.root_cause
+    case.confirmed_at = datetime.now(timezone.utc)
+    case.confirmed_by_id = current_user.id
+    case.why_why_eligible = "true"
+    if case.status not in (CaseStatus.CONFIRMED, CaseStatus.ARCHIVED):
+        case.status = CaseStatus.CONFIRMED
+
+    log_event(db, event="case.root_cause_confirmed", user_id=current_user.id,
+              detail={"case_id": case.case_id, "root_cause": body.root_cause[:200]})
+    db.commit()
+    background.add_task(embed_root_cause, case.id)
+    return _load_case(db, case.id)
+
+
+@router.get("/{case_id}/timeline", response_model=list[TimelineEvent])
+def get_timeline(
+    case_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    case = (
+        db.query(Case)
+        .options(joinedload(Case.reporter), joinedload(Case.confirmed_by))
+        .filter((Case.id == case_id) | (Case.case_id == case_id))
+        .first()
+    )
+    if not case:
+        raise HTTPException(status_code=404, detail="Kasus tidak ditemukan")
+    return build_timeline(db, case)
+
+
+@router.get("/{case_id}/trial-queue")
+def get_trial_queue(case_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    case = db.query(Case).filter((Case.id == case_id) | (Case.case_id == case_id)).first()
+    if not case:
+        raise HTTPException(status_code=404, detail="Kasus tidak ditemukan")
+    return {
+        "items": case.trial_queue or [],
+        "status": case.trial_queue_status.value if case.trial_queue_status else "DRAFT",
+    }
+
+
+@router.put("/{case_id}/trial-queue")
+def save_trial_queue(
+    case_id: str,
+    body: TrialQueueRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    case = db.query(Case).filter((Case.id == case_id) | (Case.case_id == case_id)).first()
+    if not case:
+        raise HTTPException(status_code=404, detail="Kasus tidak ditemukan")
+    case.trial_queue = [item.model_dump() for item in body.items]
+    try:
+        case.trial_queue_status = QueueStatus(body.status.upper())
+    except ValueError:
+        case.trial_queue_status = QueueStatus.DRAFT
+    db.commit()
+    return {"items": case.trial_queue, "status": case.trial_queue_status.value}
+
+
+@router.post("/{case_id}/trial-queue/approve")
+def approve_trial_queue(
+    case_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    case = db.query(Case).filter((Case.id == case_id) | (Case.case_id == case_id)).first()
+    if not case:
+        raise HTTPException(status_code=404, detail="Kasus tidak ditemukan")
+    if not case.trial_queue:
+        raise HTTPException(status_code=400, detail="Trial queue kosong")
+    high_risk = [i for i in case.trial_queue if i.get("risk_level") == "HIGH" and not i.get("skipped")]
+    if high_risk and current_user.role == UR.JUNIOR:
+        raise HTTPException(status_code=403, detail="Trial HIGH risk memerlukan persetujuan Senior")
+    case.trial_queue_status = QueueStatus.APPROVED
+    log_event(db, event="trial_queue.approved", user_id=current_user.id, detail={"case_id": case.case_id})
+    db.commit()
+    return {"status": "APPROVED", "items": case.trial_queue}
 
 
 # ── GET /api/cases/:id/duplicate-check ───────────────────────────────────────
