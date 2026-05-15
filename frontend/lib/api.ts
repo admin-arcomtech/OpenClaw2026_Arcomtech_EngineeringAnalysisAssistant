@@ -25,15 +25,28 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
-    headers: { "Content-Type": "application/json", ...init?.headers },
-    ...init,
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${BASE}${path}`, {
+      ...init,
+      headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
+    });
+  } catch (e) {
+    // Network-level failure (DNS, CORS, server down, etc.)
+    throw new ApiError(0, `Tidak dapat terhubung ke ${BASE} — periksa koneksi & port 8000`);
+  }
   if (!res.ok) {
     let detail = `HTTP ${res.status}`;
     try {
       const body = await res.json();
-      detail = body.detail ?? detail;
+      if (typeof body.detail === "string") {
+        detail = body.detail;
+      } else if (Array.isArray(body.detail)) {
+        // FastAPI/Pydantic validation errors
+        detail = body.detail.map((d: { loc?: unknown[]; msg?: string }) =>
+          `${(d.loc ?? []).join(".")} ${d.msg ?? ""}`.trim()
+        ).join("; ");
+      }
     } catch {}
     throw new ApiError(res.status, detail);
   }
