@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from app.core.config import settings
 from app.core.logging import setup_logging, request_id_middleware
-from app.routers import auth, health, cases, metadata
+from app.routers import auth, health, cases, metadata, ai
 
 setup_logging(settings.LOG_LEVEL)
 
@@ -28,6 +28,7 @@ app.include_router(auth.router)
 app.include_router(health.router)
 app.include_router(cases.router)
 app.include_router(metadata.router)
+app.include_router(ai.router)
 
 # Serve uploaded files
 UPLOAD_DIR = os.environ.get("UPLOAD_DIR", "/tmp/arcom_uploads")

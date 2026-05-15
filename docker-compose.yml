@@ -36,6 +36,20 @@ services:
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
       APP_ENV: ${APP_ENV:-development}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # ── Openclaw Gateway (Sprint 3 AI Core) ──
+      AI_ENABLED: ${AI_ENABLED:-true}
+      OPENCLAW_BASE_URL: ${OPENCLAW_BASE_URL:-http://host.docker.internal:18789/v1}
+      OPENCLAW_TOKEN: ${OPENCLAW_TOKEN:-}
+      OPENCLAW_CHAT_MODEL: ${OPENCLAW_CHAT_MODEL:-openclaw/default}
+      OPENCLAW_EMBEDDING_MODEL: ${OPENCLAW_EMBEDDING_MODEL:-openclaw/default}
+      OPENCLAW_CHAT_BACKEND_MODEL: ${OPENCLAW_CHAT_BACKEND_MODEL:-}
+      OPENCLAW_EMBEDDING_BACKEND_MODEL: ${OPENCLAW_EMBEDDING_BACKEND_MODEL:-}
+      OPENCLAW_LLM_TIMEOUT_S: ${OPENCLAW_LLM_TIMEOUT_S:-60}
+      OPENCLAW_EMBEDDING_TIMEOUT_S: ${OPENCLAW_EMBEDDING_TIMEOUT_S:-30}
+      EMBEDDING_DIM: ${EMBEDDING_DIM:-1536}
+      UPLOAD_DIR: /tmp/arcom_uploads
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "8000:8000"
     command: >
@@ -43,6 +57,7 @@ services:
         alembic upgrade head &&
         python seed.py &&
         python seed_cases.py &&
+        python embed_existing.py &&
         uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
       "
     volumes:
