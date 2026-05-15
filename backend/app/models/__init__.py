@@ -5,6 +5,8 @@ from app.models.case_photo import CasePhoto
 from app.models.audit_log import AuditLog
 from app.models.notification import Notification
 from app.models.ai_recommendation import AIRecommendation, AIFeedback
+from app.models.why_why import WhyWhy, WhyWhyStatus
+from app.models.import_job import ImportJob
 
 __all__ = [
     "User", "UserRole",
@@ -14,4 +16,6 @@ __all__ = [
     "AuditLog",
     "Notification",
     "AIRecommendation", "AIFeedback",
+    "WhyWhy", "WhyWhyStatus",
+    "ImportJob",
 ]

@@ -116,6 +116,7 @@ class Case(Base):
     confirmed_at = Column(DateTime(timezone=True), nullable=True)
     confirmed_by_id = Column(String(36), ForeignKey("users.id"), nullable=True)
     why_why_eligible = Column(String(10), nullable=True, default="false")
+    archived_at = Column(DateTime(timezone=True), nullable=True)
 
     embedding = Column(Vector(1536), nullable=True)
 

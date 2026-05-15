@@ -31,8 +31,10 @@ from app.schemas.ai import (
     SimilarCaseResponse,
 )
 from app.schemas.trial import TrialPriorityRequest, TrialPriorityResponse
+from app.schemas.why_why import WhyWhyDraftRequest
 from app.services.embedding_service import _case_text
 from app.services.trial_priority import build_trial_queue
+from app.services.why_why_service import generate_draft
 
 router = APIRouter(prefix="/api/ai", tags=["ai"])
 logger = logging.getLogger(__name__)
@@ -266,6 +268,36 @@ def trial_priority(
     db.commit()
 
     return TrialPriorityResponse(trial_queue=items, all_high_risk=all_high, warning=warning)
+
+
+# ─── F-006 Why-Why Draft ─────────────────────────────────────────────────────
+
+@router.post("/why-why-draft")
+def why_why_draft(
+    body: WhyWhyDraftRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    case = db.query(Case).filter((Case.id == body.case_id) | (Case.case_id == body.case_id)).first()
+    if not case:
+        raise HTTPException(status_code=404, detail="Kasus tidak ditemukan")
+    if case.why_why_eligible != "true":
+        raise HTTPException(
+            status_code=400,
+            detail="Why-Why dapat dibuat hanya setelah root cause dikonfirmasi.",
+        )
+    try:
+        doc, draft_data, source = generate_draft(db, case, body.notes)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {
+        "id": doc.id,
+        "case_id": case.id,
+        "draft": draft_data,
+        "status": doc.status.value,
+        "source": source,
+        "partial": draft_data.get("partial", False),
+    }
 
 
 # ─── Feedback (F-002 / F-003) ────────────────────────────────────────────────
