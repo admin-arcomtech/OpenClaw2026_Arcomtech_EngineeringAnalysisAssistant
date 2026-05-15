@@ -1,4 +1,18 @@
-const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+function resolveApiBase(): string {
+  const configured = process.env.NEXT_PUBLIC_API_URL;
+  if (typeof window !== "undefined") {
+    const host = window.location.hostname;
+    // Browser memakai hostname yang dilihatnya, bukan IP dari env build-time.
+    // Ini menghindari masalah ketika user akses UI dari machine yang berbeda
+    // dari mana env NEXT_PUBLIC_API_URL di-set (mis. server pilot).
+    if (host && host !== "0.0.0.0") {
+      return `${window.location.protocol}//${host}:8000`;
+    }
+  }
+  return configured ?? "http://localhost:8000";
+}
+
+const BASE = resolveApiBase();
 
 export class ApiError extends Error {
   constructor(

@@ -14,10 +14,14 @@ app = FastAPI(
     description="Backend API untuk platform AI-guided manufacturing investigation",
 )
 
+_cors_origins = settings.cors_origins_list
+_allow_all = "*" in _cors_origins or settings.APP_ENV != "production"
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins_list,
-    allow_credentials=True,
+    allow_origins=["*"] if _allow_all else _cors_origins,
+    allow_origin_regex=None if _allow_all else r"https?://.*",
+    allow_credentials=not _allow_all,
     allow_methods=["*"],
     allow_headers=["*"],
 )
