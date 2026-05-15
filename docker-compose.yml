@@ -38,14 +38,16 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     ports:
       - "8000:8000"
-    volumes:
-      - ./backend:/app
     command: >
       sh -c "
         alembic upgrade head &&
         python seed.py &&
+        python seed_cases.py &&
         uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
       "
+    volumes:
+      - ./backend:/app
+      - arcom_uploads:/tmp/arcom_uploads
 
   frontend:
     build:
@@ -66,3 +68,4 @@ services:
 
 volumes:
   postgres_data:
+  arcom_uploads:
