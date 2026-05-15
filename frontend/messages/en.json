@@ -1,0 +1,36 @@
+{
+  "app": {
+    "name": "Arcom Engineering Intelligence"
+  },
+  "auth": {
+    "login": "Sign In",
+    "logout": "Sign Out",
+    "employee_id": "Employee ID",
+    "password": "Password",
+    "login_failed": "Invalid Employee ID or password",
+    "logging_in": "Processing..."
+  },
+  "nav": {
+    "dashboard": "Dashboard",
+    "cases": "Cases",
+    "new_case": "New Case",
+    "admin": "Admin"
+  },
+  "dashboard": {
+    "welcome": "Welcome",
+    "subtitle": "AI-guided manufacturing investigation platform"
+  },
+  "cases": {
+    "title": "Cases",
+    "placeholder": "This feature will be available in Sprint 2"
+  },
+  "admin": {
+    "title": "Admin Panel",
+    "placeholder": "This feature will be available in Sprint 5"
+  },
+  "error": {
+    "unauthorized": "Session expired, please log in again",
+    "forbidden": "You do not have access to this page",
+    "generic": "Something went wrong, please try again"
+  }
+}

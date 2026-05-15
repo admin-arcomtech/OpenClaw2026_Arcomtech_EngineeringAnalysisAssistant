@@ -1,0 +1,36 @@
+{
+  "app": {
+    "name": "Arcom Engineering Intelligence"
+  },
+  "auth": {
+    "login": "Masuk",
+    "logout": "Keluar",
+    "employee_id": "Employee ID",
+    "password": "Password",
+    "login_failed": "Employee ID atau password salah",
+    "logging_in": "Memproses..."
+  },
+  "nav": {
+    "dashboard": "Dashboard",
+    "cases": "Kasus",
+    "new_case": "Kasus Baru",
+    "admin": "Admin"
+  },
+  "dashboard": {
+    "welcome": "Selamat datang",
+    "subtitle": "Platform AI-guided manufacturing investigation"
+  },
+  "cases": {
+    "title": "Daftar Kasus",
+    "placeholder": "Fitur ini akan tersedia di Sprint 2"
+  },
+  "admin": {
+    "title": "Admin Panel",
+    "placeholder": "Fitur ini akan tersedia di Sprint 5"
+  },
+  "error": {
+    "unauthorized": "Sesi berakhir, silakan login kembali",
+    "forbidden": "Anda tidak memiliki akses ke halaman ini",
+    "generic": "Terjadi kesalahan, coba lagi"
+  }
+}
