@@ -346,6 +346,112 @@ export const api = {
     request<TimelineEvent[]>(`/api/cases/${caseId}/timeline`, {
       headers: { Authorization: `Bearer ${token}` },
     }),
+
+  // Sprint 5 — Why-Why
+  generateWhyWhyDraft: (token: string, case_id: string, notes?: string) =>
+    request<WhyWhyDoc>("/api/ai/why-why-draft", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ case_id, notes }),
+    }),
+
+  getWhyWhy: (token: string, caseId: string) =>
+    request<WhyWhyDoc>(`/api/cases/${caseId}/why-why`, {
+      headers: { Authorization: `Bearer ${token}` },
+    }),
+
+  updateWhyWhy: (token: string, caseId: string, draft: object) =>
+    request<WhyWhyDoc>(`/api/cases/${caseId}/why-why`, {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ draft }),
+    }),
+
+  submitWhyWhy: (token: string, caseId: string) =>
+    request<WhyWhyDoc>(`/api/cases/${caseId}/why-why/submit`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify({}),
+    }),
+
+  approveWhyWhy: (token: string, caseId: string, approved: boolean, comment?: string) =>
+    request<WhyWhyDoc>(`/api/cases/${caseId}/why-why/approve`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ approved, comment }),
+    }),
+
+  // Sprint 5 — Knowledge Base
+  searchKnowledge: (token: string, params: { q?: string; model?: string; process?: string; limit?: number }) => {
+    const qs = new URLSearchParams();
+    if (params.q) qs.set("q", params.q);
+    if (params.model) qs.set("model", params.model);
+    if (params.process) qs.set("process", params.process);
+    if (params.limit) qs.set("limit", String(params.limit));
+    return request<{ items: KnowledgeItem[]; mode: string; total: number }>(
+      `/api/knowledge/search?${qs}`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+  },
+
+  knowledgeMetrics: (token: string) =>
+    request<KnowledgeMetrics>("/api/knowledge/metrics", {
+      headers: { Authorization: `Bearer ${token}` },
+    }),
+
+  // Sprint 5 — Notifications
+  listNotifications: (token: string, unread_only = false) =>
+    request<{ items: NotificationItem[]; unread_count: number }>(
+      `/api/notifications?unread_only=${unread_only}`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    ),
+
+  markNotificationRead: (token: string, id: string) =>
+    request<{ ok: boolean }>(`/api/notifications/${id}/read`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    }),
+
+  // Sprint 5 — Admin
+  adminKpis: (token: string) =>
+    request<AdminKpis>("/api/admin/kpis", { headers: { Authorization: `Bearer ${token}` } }),
+
+  adminListUsers: (token: string) =>
+    request<AdminUser[]>(`/api/admin/users`, { headers: { Authorization: `Bearer ${token}` } }),
+
+  adminCreateUser: (token: string, data: AdminUserCreate) =>
+    request<AdminUser>(`/api/admin/users`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify(data),
+    }),
+
+  adminUpdateUser: (token: string, userId: string, data: Partial<AdminUserCreate>) =>
+    request<AdminUser>(`/api/admin/users/${userId}`, {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify(data),
+    }),
+
+  adminAuditLog: (token: string, limit = 100) =>
+    request<{ items: AuditEntry[] }>(`/api/admin/audit?limit=${limit}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    }),
+
+  adminImport: async (token: string, file: File, dry_run: boolean) => {
+    const form = new FormData();
+    form.append("file", file);
+    const res = await fetch(`${BASE}/api/admin/import?dry_run=${dry_run}`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: form,
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new ApiError(res.status, body.detail ?? `HTTP ${res.status}`);
+    }
+    return res.json() as Promise<ImportResult>;
+  },
 };
 
 export type TrialQueueItem = {
@@ -403,4 +509,100 @@ export type TimelineEvent = {
   detail?: string;
   actor?: string;
   created_at: string;
+};
+
+export type WhyWhyDoc = {
+  id: string;
+  case_id: string;
+  draft?: {
+    why_steps: { level: number; question: string; answer: string; category_4m1e: string }[];
+    immediate_countermeasure?: string;
+    corrective_action?: string;
+    preventive_action?: string;
+    partial?: boolean;
+    source?: string;
+  };
+  approved_version?: object;
+  status: string;
+  is_readonly?: boolean;
+  submitted_at?: string;
+  approved_at?: string;
+  rejection_comment?: string;
+};
+
+export type KnowledgeItem = {
+  case_id: string;
+  id: string;
+  title: string;
+  model?: string;
+  process?: string;
+  fatal_error?: string;
+  root_cause?: string;
+  status: string;
+  similarity_pct?: number;
+  has_why_why: boolean;
+  created_at?: string;
+};
+
+export type KnowledgeMetrics = {
+  indexed_cases: number;
+  archived_cases: number;
+  approved_why_why: number;
+  last_import_at?: string | null;
+};
+
+export type NotificationItem = {
+  id: string;
+  event: string;
+  message: string;
+  case_id?: string;
+  is_read: boolean;
+  created_at: string;
+};
+
+export type AdminKpis = {
+  avg_time_to_root_cause_hours?: number | null;
+  avg_why_why_creation_hours?: number | null;
+  ai_usefulness_pct?: number | null;
+  total_feedback: number;
+  kb_archived_cases: number;
+  kb_indexed_cases: number;
+  repeat_abnormality_cases_90d: number;
+};
+
+export type AdminUser = {
+  id: string;
+  employee_id: string;
+  full_name: string;
+  email?: string | null;
+  division?: string | null;
+  role: string;
+  is_active: boolean;
+};
+
+export type AdminUserCreate = {
+  employee_id: string;
+  full_name: string;
+  email?: string;
+  division?: string;
+  role: string;
+  password?: string;
+};
+
+export type AuditEntry = {
+  id: string;
+  event: string;
+  user_id?: string;
+  detail?: object;
+  created_at?: string;
+};
+
+export type ImportResult = {
+  job_id: string;
+  status: string;
+  dry_run: boolean;
+  total_rows?: number;
+  imported_rows?: number;
+  skipped_rows?: number;
+  errors?: { row: number; error: string }[];
 };

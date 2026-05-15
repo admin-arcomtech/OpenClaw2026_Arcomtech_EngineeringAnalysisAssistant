@@ -19,6 +19,8 @@ class User(Base):
     employee_id = Column(String(50), unique=True, nullable=False, index=True)
     full_name = Column(String(200), nullable=False)
     role = Column(SAEnum(UserRole, name="user_role"), nullable=False, default=UserRole.JUNIOR)
+    email = Column(String(200), nullable=True)
+    division = Column(String(100), nullable=True)
     hashed_password = Column(String(255), nullable=False)
     is_active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))

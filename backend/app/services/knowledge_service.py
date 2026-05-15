@@ -53,6 +53,27 @@ def embed_root_cause(db: Session, case_id: str) -> str | None:
     return source
 
 
+def embed_why_why(db: Session, why_why_id: str) -> str | None:
+    from app.models.why_why import WhyWhy, WhyWhyStatus
+    doc = db.query(WhyWhy).filter(WhyWhy.id == why_why_id).first()
+    if not doc or doc.status != WhyWhyStatus.APPROVED:
+        return None
+    content = doc.approved_version or doc.draft or {}
+    steps = content.get("why_steps", [])
+    chain = " → ".join(s.get("answer", "") for s in steps[:5])
+    text = _normalize(
+        f"{chain} | {content.get('corrective_action', '')} | {content.get('preventive_action', '')}"
+    )
+    if not text.strip():
+        return None
+    provider = get_provider()
+    vector, source = provider.embed(text)
+    doc.embedding = vector
+    db.commit()
+    logger.info("Knowledge: why-why %s embedded via %s", why_why_id, source)
+    return source
+
+
 def embed_archived_case(db: Session, case_id: str) -> str | None:
     case = db.query(Case).filter(Case.id == case_id).first()
     if not case:

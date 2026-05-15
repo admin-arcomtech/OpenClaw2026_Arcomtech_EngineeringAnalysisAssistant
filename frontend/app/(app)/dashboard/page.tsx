@@ -23,6 +23,7 @@ export default function DashboardPage() {
   const [investigating, setInvestigating] = useState<CaseListResponse | null>(null);
   const [resolved, setResolved] = useState<CaseListResponse | null>(null);
   const [recent, setRecent] = useState<CaseSummary[]>([]);
+  const [kpis, setKpis] = useState<{ ai_usefulness_pct?: number | null; avg_time_to_root_cause_hours?: number | null; kb_indexed_cases?: number } | null>(null);
 
   useEffect(() => {
     if (!token) return;
@@ -37,7 +38,10 @@ export default function DashboardPage() {
       setResolved(r);
       setRecent(all.items.slice(0, 5));
     }).catch(() => {});
-  }, [token]);
+    if (user && ["MANAGER", "ADMIN"].includes(user.role)) {
+      api.adminKpis(token).then(setKpis).catch(() => {});
+    }
+  }, [token, user]);
 
   if (!ready || !user) return null;
 
@@ -67,6 +71,19 @@ export default function DashboardPage() {
           </Link>
         ))}
       </div>
+
+      {kpis && (
+        <div className="grid grid-cols-2 gap-3 mb-6">
+          <div className="bg-purple-50 border border-purple-100 rounded-xl p-3">
+            <p className="text-xs text-gray-500">AI Berguna</p>
+            <p className="text-xl font-bold text-purple-700">{kpis.ai_usefulness_pct ?? "—"}%</p>
+          </div>
+          <div className="bg-teal-50 border border-teal-100 rounded-xl p-3">
+            <p className="text-xs text-gray-500">Avg TTRC (jam)</p>
+            <p className="text-xl font-bold text-teal-700">{kpis.avg_time_to_root_cause_hours ?? "—"}</p>
+          </div>
+        </div>
+      )}
 
       {/* Quick action */}
       <Link

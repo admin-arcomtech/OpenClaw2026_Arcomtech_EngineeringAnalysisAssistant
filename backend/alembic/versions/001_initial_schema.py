@@ -19,17 +19,29 @@ def upgrade() -> None:
     # Enable pgvector extension
     op.execute("CREATE EXTENSION IF NOT EXISTS vector")
 
-    # ENUMs
-    user_role = postgresql.ENUM("JUNIOR", "SENIOR", "MANAGER", "ADMIN", name="user_role")
-    case_status = postgresql.ENUM("OPEN", "IN_PROGRESS", "RESOLVED", "CLOSED", name="case_status")
-    severity = postgresql.ENUM("LOW", "MEDIUM", "HIGH", "CRITICAL", name="severity")
-    shift = postgresql.ENUM("PAGI", "SIANG", "MALAM", name="shift")
-    trial_result = postgresql.ENUM("PENDING", "SUCCESS", "FAILED", "PARTIAL", name="trial_result")
-    scrap_impact = postgresql.ENUM("NONE", "MINOR", "MAJOR", name="scrap_impact")
-    risk_level = postgresql.ENUM("LOW", "MEDIUM", "HIGH", name="risk_level")
-
-    for e in [user_role, case_status, severity, shift, trial_result, scrap_impact, risk_level]:
+    # ENUMs — create once, reference with create_type=False in columns
+    enum_defs = [
+        ("user_role", ["JUNIOR", "SENIOR", "MANAGER", "ADMIN"]),
+        ("case_status", ["OPEN", "IN_PROGRESS", "RESOLVED", "CLOSED"]),
+        ("severity", ["LOW", "MEDIUM", "HIGH", "CRITICAL"]),
+        ("shift", ["PAGI", "SIANG", "MALAM"]),
+        ("trial_result", ["PENDING", "SUCCESS", "FAILED", "PARTIAL"]),
+        ("scrap_impact", ["NONE", "MINOR", "MAJOR"]),
+        ("risk_level", ["LOW", "MEDIUM", "HIGH"]),
+    ]
+    enums = {}
+    for name, values in enum_defs:
+        e = postgresql.ENUM(*values, name=name)
         e.create(op.get_bind(), checkfirst=True)
+        enums[name] = postgresql.ENUM(*values, name=name, create_type=False)
+
+    user_role = enums["user_role"]
+    case_status = enums["case_status"]
+    severity = enums["severity"]
+    shift = enums["shift"]
+    trial_result = enums["trial_result"]
+    scrap_impact = enums["scrap_impact"]
+    risk_level = enums["risk_level"]
 
     # users
     op.create_table(
@@ -37,7 +49,7 @@ def upgrade() -> None:
         sa.Column("id", sa.String(36), primary_key=True),
         sa.Column("employee_id", sa.String(50), nullable=False, unique=True),
         sa.Column("full_name", sa.String(200), nullable=False),
-        sa.Column("role", sa.Enum("JUNIOR", "SENIOR", "MANAGER", "ADMIN", name="user_role"), nullable=False),
+        sa.Column("role", user_role, nullable=False),
         sa.Column("hashed_password", sa.String(255), nullable=False),
         sa.Column("is_active", sa.Boolean, nullable=False, server_default="true"),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
@@ -54,11 +66,11 @@ def upgrade() -> None:
         sa.Column("description", sa.Text, nullable=True),
         sa.Column("model", sa.String(100), nullable=True),
         sa.Column("fatal_error", sa.String(200), nullable=True),
-        sa.Column("status", sa.Enum("OPEN", "IN_PROGRESS", "RESOLVED", "CLOSED", name="case_status"), nullable=False, server_default="OPEN"),
-        sa.Column("severity", sa.Enum("LOW", "MEDIUM", "HIGH", "CRITICAL", name="severity"), nullable=True),
-        sa.Column("shift", sa.Enum("PAGI", "SIANG", "MALAM", name="shift"), nullable=True),
-        sa.Column("scrap_impact", sa.Enum("NONE", "MINOR", "MAJOR", name="scrap_impact"), nullable=True, server_default="NONE"),
-        sa.Column("risk_level", sa.Enum("LOW", "MEDIUM", "HIGH", name="risk_level"), nullable=True),
+        sa.Column("status", case_status, nullable=False, server_default="OPEN"),
+        sa.Column("severity", severity, nullable=True),
+        sa.Column("shift", shift, nullable=True),
+        sa.Column("scrap_impact", scrap_impact, nullable=True, server_default="NONE"),
+        sa.Column("risk_level", risk_level, nullable=True),
         sa.Column("production_line", sa.String(100), nullable=True),
         sa.Column("reporter_id", sa.String(36), sa.ForeignKey("users.id"), nullable=False),
         sa.Column("assigned_to_id", sa.String(36), sa.ForeignKey("users.id"), nullable=True),
@@ -82,7 +94,7 @@ def upgrade() -> None:
         sa.Column("sequence", sa.Integer, nullable=False, server_default="1"),
         sa.Column("action_taken", sa.Text, nullable=True),
         sa.Column("hypothesis", sa.Text, nullable=True),
-        sa.Column("result", sa.Enum("PENDING", "SUCCESS", "FAILED", "PARTIAL", name="trial_result"), nullable=False, server_default="PENDING"),
+        sa.Column("result", trial_result, nullable=False, server_default="PENDING"),
         sa.Column("notes", sa.Text, nullable=True),
         sa.Column("performed_by_id", sa.String(36), sa.ForeignKey("users.id"), nullable=True),
         sa.Column("embedding", sa.Text, nullable=True),

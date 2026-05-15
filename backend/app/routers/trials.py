@@ -27,10 +27,12 @@ ALLOWED_MIME = {"image/jpeg", "image/png", "image/webp"}
 MAX_TRIAL_PHOTOS = 3
 
 
-def _get_case(db: Session, case_id: str) -> Case:
+def _get_case(db: Session, case_id: str, readonly_ok: bool = False) -> Case:
     case = db.query(Case).filter((Case.id == case_id) | (Case.case_id == case_id)).first()
     if not case:
         raise HTTPException(status_code=404, detail="Kasus tidak ditemukan")
+    if not readonly_ok and case.status == CaseStatus.ARCHIVED:
+        raise HTTPException(status_code=403, detail="Kasus diarsipkan — hanya baca")
     return case
 
 
@@ -61,7 +63,7 @@ def list_trials(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    case = _get_case(db, case_id)
+    case = _get_case(db, case_id, readonly_ok=True)
     trials = (
         db.query(Trial)
         .filter(Trial.case_id == case.id)

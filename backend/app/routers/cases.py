@@ -40,6 +40,11 @@ MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
 MAX_PHOTOS_PER_CASE = 5
 
 
+def _assert_not_archived(case: Case) -> None:
+    if case.status == CaseStatus.ARCHIVED:
+        raise HTTPException(status_code=403, detail="Kasus diarsipkan — hanya baca")
+
+
 def _load_case(db: Session, case_id: str) -> Case:
     case = (
         db.query(Case)
@@ -210,6 +215,7 @@ def update_status(
     case.updated_at = datetime.now(timezone.utc)
 
     if to_status == CaseStatus.ARCHIVED:
+        case.archived_at = datetime.now(timezone.utc)
         background.add_task(embed_archived_case, case.id)
 
     log_event(
@@ -384,6 +390,7 @@ async def upload_photo(
     case = db.query(Case).filter((Case.id == case_id) | (Case.case_id == case_id)).first()
     if not case:
         raise HTTPException(status_code=404, detail="Kasus tidak ditemukan")
+    _assert_not_archived(case)
 
     # Max photos check
     photo_count = db.query(CasePhoto).filter(CasePhoto.case_id == case.id).count()

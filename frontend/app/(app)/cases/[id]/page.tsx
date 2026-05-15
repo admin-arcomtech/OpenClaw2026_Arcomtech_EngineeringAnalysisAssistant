@@ -263,6 +263,20 @@ export default function CaseDetailPage() {
         </div>
       )}
 
+      {/* Sprint 5 — Why-Why */}
+      {caseData.why_why_eligible === "true" && (
+        <Link
+          href={`/cases/${caseData.id}/why-why`}
+          className="flex items-center justify-between bg-indigo-50 border border-indigo-200 rounded-2xl p-4 hover:border-indigo-300"
+        >
+          <div>
+            <p className="font-semibold text-indigo-800">Why-Why Analysis</p>
+            <p className="text-xs text-indigo-600">Buat atau edit draft 5-Why</p>
+          </div>
+          <span className="text-indigo-400">→</span>
+        </Link>
+      )}
+
       {/* Sprint 4 — Timeline */}
       {token && <CaseTimeline token={token} caseId={caseData.id} />}
 
